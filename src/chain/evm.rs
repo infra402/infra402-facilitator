@@ -62,6 +62,15 @@ sol!(
     "abi/USDC.json"
 );
 
+sol!(
+    #[allow(missing_docs)]
+    #[allow(clippy::too_many_arguments)]
+    #[derive(Debug)]
+    #[sol(rpc)]
+    XBNB,
+    "abi/XBNB.json"
+);
+
 sol! {
     #[allow(missing_docs)]
     #[allow(clippy::too_many_arguments)]
@@ -75,6 +84,15 @@ sol! {
 /// If absent on a target chain, verification will fail; you should deploy the validator there.
 const VALIDATOR_ADDRESS: alloy::primitives::Address =
     address!("0xdAcD51A54883eb67D95FAEb2BBfdC4a9a6BD2a3B");
+
+/// Unified enum for ERC-3009 compatible token contracts (USDC and XBNB).
+///
+/// Both USDC and XBNB implement the ERC-3009 `transferWithAuthorization` interface.
+/// This enum allows the code to work with either token type while maintaining type safety.
+pub enum Erc3009Contract<P> {
+    Usdc(USDC::USDCInstance<P>),
+    Xbnb(XBNB::XBNBInstance<P>),
+}
 
 /// Combined filler type for gas, blob gas, nonce, and chain ID.
 type InnerFiller = JoinFill<
@@ -410,56 +428,111 @@ where
                 // Prepare the call to simulate transfer the funds
                 let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
                 // Execute both calls in a single transaction simulation to accommodate for possible smart wallet creation
-                let (is_valid_signature_result, transfer_result) = self
-                    .inner()
-                    .multicall()
-                    .add(is_valid_signature_call)
-                    .add(transfer_call.tx)
-                    .aggregate3()
-                    .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                            from = %transfer_call.from,
-                            to = %transfer_call.to,
-                            value = %transfer_call.value,
-                            valid_after = %transfer_call.valid_after,
-                            valid_before = %transfer_call.valid_before,
-                            nonce = %transfer_call.nonce,
-                            signature = %transfer_call.signature,
-                            token_contract = %transfer_call.contract_address,
-                            otel.kind = "client",
-                    ))
-                    .await
-                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
-                let is_valid_signature_result = is_valid_signature_result
-                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
-                if !is_valid_signature_result {
-                    return Err(FacilitatorLocalError::InvalidSignature(
-                        payer.into(),
-                        "Incorrect signature".to_string(),
-                    ));
+                match transfer_call.tx {
+                    TransferWithAuthorizationCallBuilder::Usdc(tx) => {
+                        let (is_valid_signature_result, transfer_result) = self
+                            .inner()
+                            .multicall()
+                            .add(is_valid_signature_call)
+                            .add(tx)
+                            .aggregate3()
+                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                    from = %transfer_call.from,
+                                    to = %transfer_call.to,
+                                    value = %transfer_call.value,
+                                    valid_after = %transfer_call.valid_after,
+                                    valid_before = %transfer_call.valid_before,
+                                    nonce = %transfer_call.nonce,
+                                    signature = %transfer_call.signature,
+                                    token_contract = %transfer_call.contract_address,
+                                    otel.kind = "client",
+                            ))
+                            .await
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        let is_valid_signature_result = is_valid_signature_result
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        if !is_valid_signature_result {
+                            return Err(FacilitatorLocalError::InvalidSignature(
+                                payer.into(),
+                                "Incorrect signature".to_string(),
+                            ));
+                        }
+                        transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
+                    }
+                    TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
+                        let (is_valid_signature_result, transfer_result) = self
+                            .inner()
+                            .multicall()
+                            .add(is_valid_signature_call)
+                            .add(tx)
+                            .aggregate3()
+                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                    from = %transfer_call.from,
+                                    to = %transfer_call.to,
+                                    value = %transfer_call.value,
+                                    valid_after = %transfer_call.valid_after,
+                                    valid_before = %transfer_call.valid_before,
+                                    nonce = %transfer_call.nonce,
+                                    signature = %transfer_call.signature,
+                                    token_contract = %transfer_call.contract_address,
+                                    otel.kind = "client",
+                            ))
+                            .await
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        let is_valid_signature_result = is_valid_signature_result
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        if !is_valid_signature_result {
+                            return Err(FacilitatorLocalError::InvalidSignature(
+                                payer.into(),
+                                "Incorrect signature".to_string(),
+                            ));
+                        }
+                        transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
+                    }
                 }
-                transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
             }
             StructuredSignature::EIP1271(signature) => {
                 // It is EOA or EIP-1271 signature, which we can pass to the transfer simulation
                 let transfer_call =
                     transferWithAuthorization_0(&contract, &payment, signature).await?;
-                transfer_call
-                    .tx
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                            from = %transfer_call.from,
-                            to = %transfer_call.to,
-                            value = %transfer_call.value,
-                            valid_after = %transfer_call.valid_after,
-                            valid_before = %transfer_call.valid_before,
-                            nonce = %transfer_call.nonce,
-                            signature = %transfer_call.signature,
-                            token_contract = %transfer_call.contract_address,
-                            otel.kind = "client",
-                    ))
-                    .await
-                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                match transfer_call.tx {
+                    TransferWithAuthorizationCallBuilder::Usdc(tx) => {
+                        tx
+                            .call()
+                            .into_future()
+                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                    from = %transfer_call.from,
+                                    to = %transfer_call.to,
+                                    value = %transfer_call.value,
+                                    valid_after = %transfer_call.valid_after,
+                                    valid_before = %transfer_call.valid_before,
+                                    nonce = %transfer_call.nonce,
+                                    signature = %transfer_call.signature,
+                                    token_contract = %transfer_call.contract_address,
+                                    otel.kind = "client",
+                            ))
+                            .await
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                    }
+                    TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
+                        tx
+                            .call()
+                            .into_future()
+                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                    from = %transfer_call.from,
+                                    to = %transfer_call.to,
+                                    value = %transfer_call.value,
+                                    valid_after = %transfer_call.valid_after,
+                                    valid_before = %transfer_call.valid_before,
+                                    nonce = %transfer_call.nonce,
+                                    signature = %transfer_call.signature,
+                                    token_contract = %transfer_call.contract_address,
+                                    otel.kind = "client",
+                            ))
+                            .await
+                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                    }
+                }
             }
         }
 
@@ -627,6 +700,36 @@ where
     }
 }
 
+/// Unified enum for ERC-3009 `transferWithAuthorization` call builders.
+///
+/// Wraps either a USDC or XBNB call builder for the `transferWithAuthorization` function.
+/// Note: USDC has multiple overloads (_0), while XBNB has only one (no suffix).
+pub enum TransferWithAuthorizationCallBuilder<P> {
+    Usdc(SolCallBuilder<P, USDC::transferWithAuthorization_0Call>),
+    Xbnb(SolCallBuilder<P, XBNB::transferWithAuthorizationCall>),
+}
+
+impl<P> TransferWithAuthorizationCallBuilder<P>
+where
+    P: Provider,
+{
+    /// Get the target address (contract address) of the call.
+    pub fn target(&self) -> Address {
+        match self {
+            TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.target(),
+            TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.target(),
+        }
+    }
+
+    /// Get the calldata for this transaction.
+    pub fn calldata(&self) -> Bytes {
+        match self {
+            TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.calldata().clone(),
+            TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.calldata().clone(),
+        }
+    }
+}
+
 /// A prepared call to `transferWithAuthorization` (ERC-3009) including all derived fields.
 ///
 /// This struct wraps the assembled call builder, making it reusable across verification
@@ -635,7 +738,7 @@ where
 /// This is created by [`EvmProvider::transferWithAuthorization_0`].
 pub struct TransferWithAuthorization0Call<P> {
     /// The prepared call builder that can be `.call()`ed or `.send()`ed.
-    pub tx: SolCallBuilder<P, USDC::transferWithAuthorization_0Call>,
+    pub tx: TransferWithAuthorizationCallBuilder<P>,
     /// The sender (`from`) address for the authorization.
     pub from: alloy::primitives::Address,
     /// The recipient (`to`) address for the authorization.
@@ -685,33 +788,50 @@ fn assert_time(
 
 /// Checks if the payer has enough on-chain token balance to meet the `maxAmountRequired`.
 ///
-/// Performs an `ERC20.balanceOf()` call using the USDC contract instance.
+/// Performs an `ERC20.balanceOf()` call using the token contract instance.
 ///
 /// # Errors
 /// Returns [`FacilitatorLocalError::InsufficientFunds`] if the balance is too low.
 /// Returns [`FacilitatorLocalError::ContractCall`] if the balance query fails.
 #[instrument(skip_all, err, fields(
     sender = %sender,
-    max_required = %max_amount_required,
-    token_contract = %usdc_contract.address()
+    max_required = %max_amount_required
 ))]
 async fn assert_enough_balance<P: Provider>(
-    usdc_contract: &USDC::USDCInstance<P>,
+    token_contract: &Erc3009Contract<P>,
     sender: &EvmAddress,
     max_amount_required: U256,
 ) -> Result<(), FacilitatorLocalError> {
-    let balance = usdc_contract
-        .balanceOf(sender.0)
-        .call()
-        .into_future()
-        .instrument(tracing::info_span!(
-            "fetch_token_balance",
-            token_contract = %usdc_contract.address(),
-            sender = %sender,
-            otel.kind = "client"
-        ))
-        .await
-        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+    let balance = match token_contract {
+        Erc3009Contract::Usdc(usdc_contract) => {
+            usdc_contract
+                .balanceOf(sender.0)
+                .call()
+                .into_future()
+                .instrument(tracing::info_span!(
+                    "fetch_token_balance",
+                    token_contract = %usdc_contract.address(),
+                    sender = %sender,
+                    otel.kind = "client"
+                ))
+                .await
+                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+        }
+        Erc3009Contract::Xbnb(xbnb_contract) => {
+            xbnb_contract
+                .balanceOf(sender.0)
+                .call()
+                .into_future()
+                .instrument(tracing::info_span!(
+                    "fetch_token_balance",
+                    token_contract = %xbnb_contract.address(),
+                    sender = %sender,
+                    otel.kind = "client"
+                ))
+                .await
+                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+        }
+    };
 
     if balance < max_amount_required {
         Err(FacilitatorLocalError::InsufficientFunds((*sender).into()))
@@ -777,7 +897,7 @@ async fn is_contract_deployed<P: Provider>(
 ))]
 async fn assert_domain<P: Provider>(
     chain: &EvmChain,
-    token_contract: &USDC::USDCInstance<P>,
+    token_contract: &Erc3009Contract<P>,
     payload: &PaymentPayload,
     asset_address: &Address,
     requirements: &PaymentRequirements,
@@ -805,16 +925,34 @@ async fn assert_domain<P: Provider>(
     let version = if let Some(version) = version {
         version
     } else {
-        token_contract
-            .version()
-            .call()
-            .into_future()
-            .instrument(tracing::info_span!(
-                "fetch_eip712_version",
-                otel.kind = "client",
-            ))
-            .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+        // Call .version() on USDC or .eip712Domain().version on XBNB
+        match token_contract {
+            Erc3009Contract::Usdc(usdc_contract) => {
+                usdc_contract
+                    .version()
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_eip712_version",
+                        otel.kind = "client",
+                    ))
+                    .await
+                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            }
+            Erc3009Contract::Xbnb(xbnb_contract) => {
+                let domain = xbnb_contract
+                    .eip712Domain()
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_eip712_domain",
+                        otel.kind = "client",
+                    ))
+                    .await
+                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                domain.version // version field from the eip712Domain response
+            }
+        }
     };
     let domain = eip712_domain! {
         name: name,
@@ -832,12 +970,12 @@ async fn assert_domain<P: Provider>(
 /// - Sufficient on-chain balance.
 /// - Sufficient value in payload.
 #[instrument(skip_all, err)]
-async fn assert_valid_payment<P: Provider>(
+async fn assert_valid_payment<P: Provider + Clone>(
     provider: P,
     chain: &EvmChain,
     payload: &PaymentPayload,
     requirements: &PaymentRequirements,
-) -> Result<(USDC::USDCInstance<P>, ExactEvmPayment, Eip712Domain), FacilitatorLocalError> {
+) -> Result<(Erc3009Contract<P>, ExactEvmPayment, Eip712Domain), FacilitatorLocalError> {
     let payment_payload = match &payload.payload {
         ExactPaymentPayload::Evm(payload) => payload,
         ExactPaymentPayload::Solana(_) => {
@@ -887,7 +1025,17 @@ async fn assert_valid_payment<P: Provider>(
         .clone()
         .try_into()
         .map_err(|e| FacilitatorLocalError::InvalidAddress(format!("{e:?}")))?;
-    let contract = USDC::new(asset_address, provider);
+
+    // Determine token type based on network
+    // BSC networks use XBNB, other networks use USDC
+    let contract = match chain.network {
+        Network::BscTestnet | Network::Bsc => {
+            Erc3009Contract::Xbnb(XBNB::new(asset_address, provider.clone()))
+        }
+        _ => {
+            Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
+        }
+    };
 
     let domain = assert_domain(chain, &contract, payload, &asset_address, requirements).await?;
 
@@ -924,7 +1072,7 @@ async fn assert_valid_payment<P: Provider>(
 /// This function does not perform any validation — it assumes inputs are already checked.
 #[allow(non_snake_case)]
 async fn transferWithAuthorization_0<'a, P: Provider>(
-    contract: &'a USDC::USDCInstance<P>,
+    contract: &'a Erc3009Contract<P>,
     payment: &ExactEvmPayment,
     signature: Bytes,
 ) -> Result<TransferWithAuthorization0Call<&'a P>, FacilitatorLocalError> {
@@ -934,15 +1082,50 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
     let valid_after: U256 = payment.valid_after.into();
     let valid_before: U256 = payment.valid_before.into();
     let nonce = FixedBytes(payment.nonce.0);
-    let tx = contract.transferWithAuthorization_0(
-        from,
-        to,
-        value,
-        valid_after,
-        valid_before,
-        nonce,
-        signature.clone(),
-    );
+
+    // Call transferWithAuthorization on the appropriate contract type
+    // Note: USDC has overloads (_0 suffix), XBNB has only one (no suffix)
+    let (tx, contract_address) = match contract {
+        Erc3009Contract::Usdc(usdc_contract) => {
+            let tx = usdc_contract.transferWithAuthorization_0(
+                from,
+                to,
+                value,
+                valid_after,
+                valid_before,
+                nonce,
+                signature.clone(),
+            );
+            (TransferWithAuthorizationCallBuilder::Usdc(tx), *usdc_contract.address())
+        }
+        Erc3009Contract::Xbnb(xbnb_contract) => {
+            // XBNB uses separate v, r, s parameters instead of a single Bytes signature
+            // Signature format: 65 bytes (r: 32 bytes, s: 32 bytes, v: 1 byte)
+            if signature.len() != 65 {
+                return Err(FacilitatorLocalError::InvalidSignature(
+                    payment.from.into(),
+                    format!("Invalid signature length: expected 65, got {}", signature.len()),
+                ));
+            }
+            let v = signature[64];
+            let r = FixedBytes::<32>::from_slice(&signature[0..32]);
+            let s = FixedBytes::<32>::from_slice(&signature[32..64]);
+
+            let tx = xbnb_contract.transferWithAuthorization(
+                from,
+                to,
+                value,
+                valid_after,
+                valid_before,
+                nonce,
+                v,
+                r,
+                s,
+            );
+            (TransferWithAuthorizationCallBuilder::Xbnb(tx), *xbnb_contract.address())
+        }
+    };
+
     Ok(TransferWithAuthorization0Call {
         tx,
         from,
@@ -952,7 +1135,7 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
         valid_before,
         nonce,
         signature,
-        contract_address: *contract.address(),
+        contract_address,
     })
 }
 

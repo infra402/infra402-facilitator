@@ -291,7 +291,7 @@ static USDC_SEI_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
 static XBNB_BSC_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
     USDCDeployment(TokenDeployment {
         asset: TokenAsset {
-            address: address!("0x4020BbbbBBbbBBBbBBBBBbBbbBbBbbBBbBb97000").into(),
+            address: address!("0x0000000000000000000000000000000000000000").into(),
             network: Network::BscTestnet,
         },
         decimals: 18,
