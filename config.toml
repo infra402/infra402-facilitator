@@ -88,3 +88,8 @@ health_endpoint_requires_auth = false
 # Includes: rate limit violations, auth failures, blocked IPs, etc.
 # Default: true
 log_security_events = true
+
+# Cleanup interval for abuse detector and rate limiter (in seconds)
+# This controls how often old tracking data is purged from memory
+# Default: 300 seconds (5 minutes)
+cleanup_interval_seconds = 3600

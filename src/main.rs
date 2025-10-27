@@ -30,7 +30,8 @@ use tower_http::cors;
 use crate::config::FacilitatorConfig;
 use crate::facilitator_local::FacilitatorLocal;
 use crate::provider_cache::ProviderCache;
-use crate::security::{ApiKeyAuth, IpFilter, RateLimiter};
+use crate::security::{AdminAuth, ApiKeyAuth, IpFilter, RateLimiter};
+use crate::security::abuse::{AbuseDetector, AbuseDetectorConfig};
 use crate::sig_down::SigDown;
 use crate::telemetry::Telemetry;
 
@@ -93,6 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize security components
     let api_key_auth = ApiKeyAuth::from_env();
+    let admin_auth = AdminAuth::from_env();
     let ip_filter = IpFilter::new(security::ip_filter::IpFilterConfig {
         allowed_ips: app_config.ip_filtering.allowed_ips.clone(),
         blocked_ips: app_config.ip_filtering.blocked_ips.clone(),
@@ -104,6 +106,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ban_duration: std::time::Duration::from_secs(app_config.rate_limiting.ban_duration_seconds),
         ban_threshold: app_config.rate_limiting.ban_threshold,
     });
+    let abuse_detector = AbuseDetector::new(AbuseDetectorConfig {
+        enabled: app_config.security.log_security_events,
+        invalid_signature_threshold: 10,
+        tracking_window: std::time::Duration::from_secs(300), // 5 minutes
+        log_events: app_config.security.log_security_events,
+    });
+
+    // Clone instances for use in different middleware layers and cleanup task
+    let abuse_detector_middleware = abuse_detector.clone();
+    let rate_limiter_middleware = rate_limiter.clone();
+    let ip_filter_middleware = ip_filter.clone();
+    let api_key_auth_middleware = api_key_auth.clone();
+    let admin_auth_middleware = admin_auth.clone();
+
     // Configure CORS
     let cors_layer = if app_config.cors.allowed_origins.is_empty() {
         tracing::info!("CORS: Allowing all origins (*)");
@@ -125,20 +141,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .allow_headers(cors::Any)
     };
 
+    // Admin routes with separate authentication
+    let admin_endpoints = Router::new()
+        .merge(handlers::admin_routes())
+        .layer(axum::Extension(abuse_detector.clone()))
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let auth = admin_auth_middleware.clone();
+            async move { auth.middleware(req, next).await }
+        }));
+
     let http_endpoints = Router::new()
         .merge(handlers::routes().with_state(axum_state))
+        .merge(admin_endpoints)
+        .layer(axum::Extension(abuse_detector.clone()))
         .layer(tower::ServiceBuilder::new()
             .layer(axum::middleware::from_fn(move |req, next| {
-                let auth = api_key_auth.clone();
+                let auth = api_key_auth_middleware.clone();
                 async move { auth.middleware(req, next).await }
             }))
             .layer(axum::middleware::from_fn(move |req, next| {
-                let limiter = rate_limiter.clone();
+                let limiter = rate_limiter_middleware.clone();
                 async move { limiter.middleware(req, next).await }
             }))
             .layer(axum::middleware::from_fn(move |req, next| {
-                let filter = ip_filter.clone();
+                let filter = ip_filter_middleware.clone();
                 async move { filter.middleware(req, next).await }
+            }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                let detector = abuse_detector_middleware.clone();
+                async move { detector.middleware(req, next).await }
             }))
         )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
@@ -165,6 +196,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sig_down = SigDown::try_new()?;
     let axum_cancellation_token = sig_down.cancellation_token();
+
+    // Spawn background cleanup task for abuse detector and rate limiter
+    let cleanup_cancellation_token = sig_down.cancellation_token();
+    let cleanup_interval_secs = app_config.security.cleanup_interval_seconds;
+    tracing::info!(
+        "Starting security cleanup task with interval of {} seconds",
+        cleanup_interval_secs
+    );
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(cleanup_interval_secs));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    tracing::debug!("Running periodic cleanup for abuse detector and rate limiter");
+                    abuse_detector.cleanup_old_data();
+                    rate_limiter.cleanup_expired_bans();
+                }
+                _ = cleanup_cancellation_token.cancelled() => {
+                    tracing::info!("Stopping cleanup task");
+                    break;
+                }
+            }
+        }
+    });
+
     let axum_graceful_shutdown = async move { axum_cancellation_token.cancelled().await };
     axum::serve(
         listener,

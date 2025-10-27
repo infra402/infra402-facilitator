@@ -2,8 +2,15 @@
 //!
 //! Tracks repeated invalid signatures, malformed payloads, and suspicious patterns.
 
+use axum::{
+    body::Body,
+    extract::{ConnectInfo, Request},
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 use dashmap::DashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -150,6 +157,65 @@ impl AbuseDetector {
             suspicious_ips,
         }
     }
+
+    /// Middleware to track abuse patterns from failed requests.
+    pub async fn middleware(&self, req: Request, next: Next) -> Response {
+        if !self.config.enabled {
+            return next.run(req).await;
+        }
+
+        let ip = extract_ip_from_request(&req);
+
+        // Check if this IP is already flagged as suspicious and block if so
+        if let Some(ip_addr) = &ip {
+            if self.is_suspicious(ip_addr) {
+                tracing::warn!(ip = %ip_addr, "Blocking request from suspicious IP");
+                return (StatusCode::FORBIDDEN, "Too many invalid requests").into_response();
+            }
+        }
+
+        let response = next.run(req).await;
+
+        // Track malformed requests
+        if let Some(ip_addr) = ip {
+            if response.status() == StatusCode::BAD_REQUEST {
+                self.record_malformed_payload(ip_addr, "Bad request");
+            }
+        }
+
+        response
+    }
+}
+
+/// Extract IP address from request.
+///
+/// Checks X-Forwarded-For, X-Real-IP, and then falls back to peer address.
+fn extract_ip_from_request(req: &Request<Body>) -> Option<IpAddr> {
+    // Check X-Forwarded-For header
+    if let Some(forwarded_for) = req.headers().get("x-forwarded-for") {
+        if let Ok(value) = forwarded_for.to_str() {
+            // Take the first IP in the list
+            if let Some(ip_str) = value.split(',').next() {
+                if let Ok(ip) = ip_str.trim().parse() {
+                    return Some(ip);
+                }
+            }
+        }
+    }
+
+    // Check X-Real-IP header
+    if let Some(real_ip) = req.headers().get("x-real-ip") {
+        if let Ok(value) = real_ip.to_str() {
+            if let Ok(ip) = value.parse() {
+                return Some(ip);
+            }
+        }
+    }
+
+    // Fallback to peer address from ConnectInfo
+    req.extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip())
 }
 
 #[derive(Debug, Clone)]

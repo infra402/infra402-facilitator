@@ -26,6 +26,8 @@ pub struct RateLimiter {
     violations: Arc<DashMap<IpAddr, ViolationTracker>>,
     /// Tracks banned IPs with expiration time
     bans: Arc<DashMap<IpAddr, SystemTime>>,
+    /// Tracks request timestamps per IP for rate limiting
+    request_history: Arc<DashMap<IpAddr, Vec<SystemTime>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +50,7 @@ impl RateLimiter {
             config: Arc::new(config),
             violations: Arc::new(DashMap::new()),
             bans: Arc::new(DashMap::new()),
+            request_history: Arc::new(DashMap::new()),
         }
     }
 
@@ -118,10 +121,28 @@ impl RateLimiter {
         false
     }
 
-    fn should_rate_limit(&self, _ip: &IpAddr) -> bool {
-        // Simplified check - in production, use actual token bucket algorithm
-        // via tower-governor or similar
-        // For now, this is a placeholder that returns false to not break existing behavior
+    fn should_rate_limit(&self, ip: &IpAddr) -> bool {
+        let now = SystemTime::now();
+        let window = Duration::from_secs(1);
+        let max_requests = self.config.requests_per_second as usize;
+
+        // Get or create request history for this IP
+        let mut history = self.request_history
+            .entry(*ip)
+            .or_insert_with(Vec::new);
+
+        // Remove requests older than 1 second
+        history.value_mut().retain(|&timestamp| {
+            now.duration_since(timestamp).unwrap_or_default() < window
+        });
+
+        // Check if we've exceeded the rate limit
+        if history.value().len() >= max_requests {
+            return true;
+        }
+
+        // Record this request
+        history.value_mut().push(now);
         false
     }
 

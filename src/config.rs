@@ -149,6 +149,9 @@ pub struct SecurityConfig {
     pub health_endpoint_requires_auth: bool,
     /// Log security-related events (rate limits, auth failures, etc).
     pub log_security_events: bool,
+    /// Cleanup interval for abuse detector and rate limiter (in seconds).
+    /// Default: 300 seconds (5 minutes).
+    pub cleanup_interval_seconds: u64,
 }
 
 impl Default for SecurityConfig {
@@ -156,6 +159,7 @@ impl Default for SecurityConfig {
         Self {
             health_endpoint_requires_auth: false,
             log_security_events: true,
+            cleanup_interval_seconds: 300, // 5 minutes
         }
     }
 }

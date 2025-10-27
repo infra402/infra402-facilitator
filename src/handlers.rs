@@ -9,17 +9,19 @@
 //! Each endpoint consumes or produces structured JSON payloads defined in `x402-rs`,
 //! and is compatible with official x402 client SDKs.
 
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
-use axum::{Json, Router, response::IntoResponse};
+use axum::{Extension, Json, Router, response::IntoResponse};
 use serde_json::json;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::instrument;
 
 use crate::chain::FacilitatorLocalError;
 use crate::facilitator::Facilitator;
+use crate::security::abuse::AbuseDetector;
 use crate::types::{
     ErrorResponse, FacilitatorErrorReason, MixedAddress, SettleRequest, VerifyRequest,
     VerifyResponse,
@@ -61,8 +63,7 @@ pub async fn get_settle_info() -> impl IntoResponse {
 
 pub fn routes<F>() -> Router<Arc<F>>
 where
-    F: Facilitator + Send + Sync + 'static,
-    F::Error: IntoResponse,
+    F: Facilitator<Error = FacilitatorLocalError> + Send + Sync + 'static,
 {
     Router::new()
         .route("/", get(get_root))
@@ -74,11 +75,31 @@ where
         .route("/health", get(get_health::<F>))
 }
 
+pub fn admin_routes() -> Router {
+    Router::new()
+        .route("/admin/stats", get(get_admin_stats))
+}
+
 /// `GET /`: Returns a simple greeting message from the facilitator.
 #[instrument(skip_all)]
 pub async fn get_root() -> impl IntoResponse {
     let pkg_name = env!("CARGO_PKG_NAME");
     (StatusCode::OK, format!("Hello from {pkg_name}!"))
+}
+
+/// `GET /admin/stats`: Returns abuse detection statistics.
+///
+/// This endpoint requires admin authentication via the `X-Admin-Key` header.
+/// Returns current statistics about tracked IPs and suspicious activity.
+#[instrument(skip_all)]
+pub async fn get_admin_stats(
+    Extension(abuse_detector): Extension<AbuseDetector>,
+) -> impl IntoResponse {
+    let stats = abuse_detector.get_stats();
+    (StatusCode::OK, Json(json!({
+        "total_ips_tracked": stats.total_ips_tracked,
+        "suspicious_ips": stats.suspicious_ips,
+    }))).into_response()
 }
 
 /// `GET /supported`: Lists the x402 payment schemes and networks supported by this facilitator.
@@ -88,8 +109,7 @@ pub async fn get_root() -> impl IntoResponse {
 #[instrument(skip_all)]
 pub async fn get_supported<F>(State(facilitator): State<Arc<F>>) -> impl IntoResponse
 where
-    F: Facilitator,
-    F::Error: IntoResponse,
+    F: Facilitator<Error = FacilitatorLocalError>,
 {
     match facilitator.supported().await {
         Ok(supported) => (StatusCode::OK, Json(json!(supported))).into_response(),
@@ -100,8 +120,7 @@ where
 #[instrument(skip_all)]
 pub async fn get_health<F>(State(facilitator): State<Arc<F>>) -> impl IntoResponse
 where
-    F: Facilitator,
-    F::Error: IntoResponse,
+    F: Facilitator<Error = FacilitatorLocalError>,
 {
     get_supported(State(facilitator)).await
 }
@@ -117,15 +136,21 @@ where
 #[instrument(skip_all)]
 pub async fn post_verify<F>(
     State(facilitator): State<Arc<F>>,
+    Extension(abuse_detector): Extension<AbuseDetector>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<VerifyRequest>,
 ) -> impl IntoResponse
 where
-    F: Facilitator,
-    F::Error: IntoResponse,
+    F: Facilitator<Error = FacilitatorLocalError>,
 {
     match facilitator.verify(&body).await {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),
         Err(error) => {
+            // Track invalid signatures for abuse detection
+            if matches!(error, FacilitatorLocalError::InvalidSignature(..)) {
+                abuse_detector.record_invalid_signature(addr.ip());
+            }
+
             tracing::warn!(
                 error = ?error,
                 body = %serde_json::to_string(&body).unwrap_or_else(|_| "<can-not-serialize>".to_string()),
@@ -147,15 +172,21 @@ where
 #[instrument(skip_all)]
 pub async fn post_settle<F>(
     State(facilitator): State<Arc<F>>,
+    Extension(abuse_detector): Extension<AbuseDetector>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<SettleRequest>,
 ) -> impl IntoResponse
 where
-    F: Facilitator,
-    F::Error: IntoResponse,
+    F: Facilitator<Error = FacilitatorLocalError>,
 {
     match facilitator.settle(&body).await {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),
         Err(error) => {
+            // Track invalid signatures for abuse detection
+            if matches!(error, FacilitatorLocalError::InvalidSignature(..)) {
+                abuse_detector.record_invalid_signature(addr.ip());
+            }
+
             tracing::warn!(
                 error = ?error,
                 body = %serde_json::to_string(&body).unwrap_or_else(|_| "<can-not-serialize>".to_string()),
