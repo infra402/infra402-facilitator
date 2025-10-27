@@ -1,0 +1,90 @@
+# x402 Facilitator Configuration Example
+#
+# This file shows all available configuration options for the x402 facilitator.
+# Copy this file to `config.toml` and customize as needed.
+#
+# Configuration file location can be specified via CONFIG_FILE environment variable:
+#   CONFIG_FILE=/path/to/config.toml x402-rs
+#
+# Default location: ./config.toml (in current directory)
+
+# ================================
+# Rate Limiting Configuration
+# ================================
+[rate_limiting]
+# Enable or disable rate limiting globally
+enabled = true
+
+# Global rate limit (requests per second per IP address)
+# This applies to all endpoints unless overridden
+requests_per_second = 50
+
+# Duration in seconds to ban an IP after threshold violations
+# Default: 300 seconds (5 minutes)
+ban_duration_seconds = 600
+
+# Number of rate limit violations before triggering a temporary ban
+# Default: 5 violations
+ban_threshold = 5
+
+# Per-endpoint rate limit overrides (optional)
+# Specify custom limits for specific endpoints
+[rate_limiting.endpoints]
+# Example: Limit /verify endpoint to 5 requests/second
+verify = 25
+# Example: Limit /settle endpoint to 2 requests/second
+settle = 25
+# Note: endpoint names should match route paths without leading slash
+
+# ================================
+# CORS Configuration
+# ================================
+[cors]
+# List of allowed origins for CORS requests
+# Empty list = allow all origins (*)
+# Specify exact origins for production:
+allowed_origins = [
+    # "https://example.com",
+    # "https://app.example.com",
+]
+
+# ================================
+# IP Filtering Configuration
+# ================================
+[ip_filtering]
+# List of allowed IP addresses or CIDR blocks
+# Empty list = allow all IPs
+# If specified, ONLY these IPs/ranges will be allowed
+allowed_ips = [
+    # "192.168.1.0/24",
+    # "10.0.0.1",
+]
+
+# List of blocked IP addresses or CIDR blocks
+# IPs on this list will be rejected regardless of allow list
+blocked_ips = [
+    # "192.0.2.0/24",
+    # "198.51.100.50",
+]
+
+# ================================
+# Request Configuration
+# ================================
+[request]
+# Maximum request body size in bytes
+# Default: 1048576 (1 MB)
+# Prevents abuse via large payloads
+max_body_size_bytes = 1048576
+
+# ================================
+# Security Configuration
+# ================================
+[security]
+# Require API key authentication for /health endpoint
+# Default: false (public access)
+health_endpoint_requires_auth = false
+
+# Enable logging of security-related events
+# Includes: rate limit violations, auth failures, blocked IPs, etc.
+# Default: true
+log_security_events = true
