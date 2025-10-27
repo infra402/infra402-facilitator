@@ -27,18 +27,22 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors;
 
+use crate::config::FacilitatorConfig;
 use crate::facilitator_local::FacilitatorLocal;
 use crate::provider_cache::ProviderCache;
+use crate::security::{ApiKeyAuth, IpFilter, RateLimiter};
 use crate::sig_down::SigDown;
 use crate::telemetry::Telemetry;
 
 mod chain;
+mod config;
 mod facilitator;
 mod facilitator_local;
 mod from_env;
 mod handlers;
 mod network;
 mod provider_cache;
+mod security;
 mod sig_down;
 mod telemetry;
 mod timestamp;
@@ -62,6 +66,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_version(env!("CARGO_PKG_VERSION"))
         .register();
 
+    // Load configuration
+    let app_config = match FacilitatorConfig::from_env() {
+        Ok(config) => {
+            tracing::info!("Configuration loaded successfully");
+            config
+        }
+        Err(e) => {
+            tracing::error!("Failed to load configuration: {}", e);
+            tracing::info!("Using default configuration");
+            FacilitatorConfig::default()
+        }
+    };
+
     let provider_cache = ProviderCache::from_env().await;
     // Abort if we can't initialise Ethereum providers early
     let provider_cache = match provider_cache {
@@ -74,15 +91,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let facilitator = FacilitatorLocal::new(provider_cache);
     let axum_state = Arc::new(facilitator);
 
+    // Initialize security components
+    let api_key_auth = ApiKeyAuth::from_env();
+    let ip_filter = IpFilter::new(security::ip_filter::IpFilterConfig {
+        allowed_ips: app_config.ip_filtering.allowed_ips.clone(),
+        blocked_ips: app_config.ip_filtering.blocked_ips.clone(),
+        log_events: app_config.security.log_security_events,
+    });
+    let rate_limiter = RateLimiter::new(security::rate_limit::RateLimiterConfig {
+        enabled: app_config.rate_limiting.enabled,
+        requests_per_second: app_config.rate_limiting.requests_per_second,
+        ban_duration: std::time::Duration::from_secs(app_config.rate_limiting.ban_duration_seconds),
+        ban_threshold: app_config.rate_limiting.ban_threshold,
+    });
+    // Configure CORS
+    let cors_layer = if app_config.cors.allowed_origins.is_empty() {
+        tracing::info!("CORS: Allowing all origins (*)");
+        cors::CorsLayer::new()
+            .allow_origin(cors::Any)
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers(cors::Any)
+    } else {
+        tracing::info!("CORS: Restricting to {:?}", app_config.cors.allowed_origins);
+        let origins: Vec<_> = app_config
+            .cors
+            .allowed_origins
+            .iter()
+            .filter_map(|origin| origin.parse().ok())
+            .collect();
+        cors::CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers(cors::Any)
+    };
+
     let http_endpoints = Router::new()
         .merge(handlers::routes().with_state(axum_state))
+        .layer(tower::ServiceBuilder::new()
+            .layer(axum::middleware::from_fn(move |req, next| {
+                let auth = api_key_auth.clone();
+                async move { auth.middleware(req, next).await }
+            }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                let limiter = rate_limiter.clone();
+                async move { limiter.middleware(req, next).await }
+            }))
+            .layer(axum::middleware::from_fn(move |req, next| {
+                let filter = ip_filter.clone();
+                async move { filter.middleware(req, next).await }
+            }))
+        )
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            app_config.request.max_body_size_bytes,
+        ))
         .layer(telemetry.http_tracing())
-        .layer(
-            cors::CorsLayer::new()
-                .allow_origin(cors::Any)
-                .allow_methods([Method::GET, Method::POST])
-                .allow_headers(cors::Any),
-        );
+        .layer(cors_layer);
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT")

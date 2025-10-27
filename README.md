@@ -243,6 +243,69 @@ Available variables:
 * `RPC_URL_BSC`: RPC endpoint for BSC mainnet.
 * `RPC_URL_BSC_TESTNET`: RPC endpoint for BSC testnet.
 
+#### Security Configuration
+
+**API Key Authentication (optional):**
+* `API_KEYS`: Comma-separated list of valid API keys for authentication. If set, API key authentication is **required** for `/verify` and `/settle` endpoints. Format: `Authorization: Bearer <key>`.
+* `CONFIG_FILE`: Path to TOML configuration file (default: `./config.toml`).
+
+**Configuration File (`config.toml`):**
+
+The facilitator supports optional TOML-based configuration for security features. Create a `config.toml` file (see `config.toml.example`) to configure:
+
+- **Rate Limiting**: Per-IP request limits with automatic temporary bans
+- **IP Filtering**: Allow/block specific IP addresses or CIDR ranges
+- **CORS Control**: Restrict cross-origin requests to specific origins
+- **Request Limits**: Maximum request body size
+- **Security Events**: Logging and abuse detection
+
+**Quick Example:**
+
+```toml
+# config.toml
+[rate_limiting]
+enabled = true
+requests_per_second = 10
+ban_duration_seconds = 300
+ban_threshold = 5
+
+[cors]
+allowed_origins = ["https://yourdomain.com"]
+
+[ip_filtering]
+allowed_ips = []  # empty = allow all
+blocked_ips = []  # empty = block none
+
+[request]
+max_body_size_bytes = 1048576  # 1 MB
+
+[security]
+log_security_events = true
+```
+
+**Production Recommendations:**
+
+1. ✅ Enable API key authentication:
+   ```bash
+   export API_KEYS="$(openssl rand -hex 32)"
+   ```
+
+2. ✅ Restrict CORS origins in `config.toml`:
+   ```toml
+   [cors]
+   allowed_origins = ["https://yourdomain.com"]
+   ```
+
+3. ✅ Enable rate limiting to prevent abuse
+
+4. ✅ Deploy behind HTTPS reverse proxy (Nginx, Caddy, Cloudflare)
+
+5. ✅ Monitor security logs:
+   ```bash
+   RUST_LOG=info x402-rs | grep -E "(banned|blocked|unauthorized)"
+   ```
+
+**See [docs/SECURITY.md](docs/SECURITY.md) for complete security documentation.**
 
 ### Observability
 

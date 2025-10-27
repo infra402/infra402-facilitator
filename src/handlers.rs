@@ -15,6 +15,7 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router, response::IntoResponse};
 use serde_json::json;
+use std::sync::Arc;
 use tracing::instrument;
 
 use crate::chain::FacilitatorLocalError;
@@ -58,19 +59,19 @@ pub async fn get_settle_info() -> impl IntoResponse {
     }))
 }
 
-pub fn routes<A>() -> Router<A>
+pub fn routes<F>() -> Router<Arc<F>>
 where
-    A: Facilitator + Clone + Send + Sync + 'static,
-    A::Error: IntoResponse,
+    F: Facilitator + Send + Sync + 'static,
+    F::Error: IntoResponse,
 {
     Router::new()
         .route("/", get(get_root))
         .route("/verify", get(get_verify_info))
-        .route("/verify", post(post_verify::<A>))
+        .route("/verify", post(post_verify::<F>))
         .route("/settle", get(get_settle_info))
-        .route("/settle", post(post_settle::<A>))
-        .route("/health", get(get_health::<A>))
-        .route("/supported", get(get_supported::<A>))
+        .route("/settle", post(post_settle::<F>))
+        .route("/supported", get(get_supported::<F>))
+        .route("/health", get(get_health::<F>))
 }
 
 /// `GET /`: Returns a simple greeting message from the facilitator.
@@ -85,10 +86,10 @@ pub async fn get_root() -> impl IntoResponse {
 /// Facilitators may expose this to help clients dynamically configure their payment requests
 /// based on available network and scheme support.
 #[instrument(skip_all)]
-pub async fn get_supported<A>(State(facilitator): State<A>) -> impl IntoResponse
+pub async fn get_supported<F>(State(facilitator): State<Arc<F>>) -> impl IntoResponse
 where
-    A: Facilitator,
-    A::Error: IntoResponse,
+    F: Facilitator,
+    F::Error: IntoResponse,
 {
     match facilitator.supported().await {
         Ok(supported) => (StatusCode::OK, Json(json!(supported))).into_response(),
@@ -97,10 +98,10 @@ where
 }
 
 #[instrument(skip_all)]
-pub async fn get_health<A>(State(facilitator): State<A>) -> impl IntoResponse
+pub async fn get_health<F>(State(facilitator): State<Arc<F>>) -> impl IntoResponse
 where
-    A: Facilitator,
-    A::Error: IntoResponse,
+    F: Facilitator,
+    F::Error: IntoResponse,
 {
     get_supported(State(facilitator)).await
 }
@@ -111,14 +112,16 @@ where
 /// [`PaymentRequirements`], including signature validity, scheme match, and fund sufficiency.
 ///
 /// Responds with a [`VerifyResponse`] indicating whether the payment can be accepted.
+///
+/// Requires API key authentication if enabled via `API_KEYS` environment variable.
 #[instrument(skip_all)]
-pub async fn post_verify<A>(
-    State(facilitator): State<A>,
+pub async fn post_verify<F>(
+    State(facilitator): State<Arc<F>>,
     Json(body): Json<VerifyRequest>,
 ) -> impl IntoResponse
 where
-    A: Facilitator,
-    A::Error: IntoResponse,
+    F: Facilitator,
+    F::Error: IntoResponse,
 {
     match facilitator.verify(&body).await {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),
@@ -139,14 +142,16 @@ where
 /// via ERC-3009 `transferWithAuthorization`, and returns a [`SettleResponse`] with transaction details.
 ///
 /// This endpoint is typically called after a successful `/verify` step.
+///
+/// Requires API key authentication if enabled via `API_KEYS` environment variable.
 #[instrument(skip_all)]
-pub async fn post_settle<A>(
-    State(facilitator): State<A>,
+pub async fn post_settle<F>(
+    State(facilitator): State<Arc<F>>,
     Json(body): Json<SettleRequest>,
 ) -> impl IntoResponse
 where
-    A: Facilitator,
-    A::Error: IntoResponse,
+    F: Facilitator,
+    F::Error: IntoResponse,
 {
     match facilitator.settle(&body).await {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),
