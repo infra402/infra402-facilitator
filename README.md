@@ -240,6 +240,8 @@ Available variables:
 * `RPC_URL_POLYGON_AMOY`: RPC endpoint for Polygon Amoy testnet.
 * `RPC_URL_SEI`: RPC endpoint for Sei mainnet.
 * `RPC_URL_SEI_TESTNET`: RPC endpoint for Sei testnet.
+* `RPC_URL_BSC`: RPC endpoint for BSC mainnet.
+* `RPC_URL_BSC_TESTNET`: RPC endpoint for BSC testnet.
 
 
 ### Observability
@@ -277,6 +279,8 @@ The Facilitator supports different networks based on the environment variables y
 | Polygon Mainnet           | `RPC_URL_POLYGON`        | ✅                | Mainnet                          |
 | Sei Testnet               | `RPC_URL_SEI_TESTNET`    | ✅                | Testnet                          |
 | Sei Mainnet               | `RPC_URL_SEI`            | ✅                | Mainnet                          |
+| BSC Testnet               | `RPC_URL_BSC_TESTNET`    | ✅                | Testnet                          |
+| BSC Mainnet               | `RPC_URL_BSC`            | ✅                | Mainnet                          |
 | Solana Mainnet            | `RPC_URL_SOLANA`         | ✅                | Mainnet                          |
 | Solana Devnet             | `RPC_URL_SOLANA_DEVNET`  | ✅                | Testnet, Recommended for testing |
 

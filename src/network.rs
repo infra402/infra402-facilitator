@@ -51,6 +51,12 @@ pub enum Network {
     /// Sei testnet (chain ID 1328).
     #[serde(rename = "sei-testnet")]
     SeiTestnet,
+    /// BSC testnet (chain ID 97).
+    #[serde(rename = "bsc-testnet")]
+    BscTestnet,
+    /// BSC mainnet (chain ID 56).
+    #[serde(rename = "bsc")]
+    Bsc,
 }
 
 impl Display for Network {
@@ -67,6 +73,8 @@ impl Display for Network {
             Network::Polygon => write!(f, "polygon"),
             Network::Sei => write!(f, "sei"),
             Network::SeiTestnet => write!(f, "sei-testnet"),
+            Network::BscTestnet => write!(f, "bsc-testnet"),
+            Network::Bsc => write!(f, "bsc"),
         }
     }
 }
@@ -91,6 +99,8 @@ impl From<Network> for NetworkFamily {
             Network::Polygon => NetworkFamily::Evm,
             Network::Sei => NetworkFamily::Evm,
             Network::SeiTestnet => NetworkFamily::Evm,
+            Network::BscTestnet => NetworkFamily::Evm,
+            Network::Bsc => NetworkFamily::Evm,
         }
     }
 }
@@ -110,6 +120,8 @@ impl Network {
             Network::Polygon,
             Network::Sei,
             Network::SeiTestnet,
+            Network::BscTestnet,
+            Network::Bsc,
         ]
     }
 }
@@ -275,6 +287,36 @@ static USDC_SEI_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
     })
 });
 
+/// Lazily initialized known xBNB deployment on BSC testnet as [`USDCDeployment`].
+static XBNB_BSC_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
+    USDCDeployment(TokenDeployment {
+        asset: TokenAsset {
+            address: address!("0x4020BbbbBBbbBBBbBBBBBbBbbBbBbbBBbBb97000").into(),
+            network: Network::BscTestnet,
+        },
+        decimals: 18,
+        eip712: Some(TokenDeploymentEip712 {
+            name: "x402 BNB".into(),
+            version: "1".into(),
+        }),
+    })
+});
+
+/// Lazily initialized known xBNB deployment on BSC mainnet as [`USDCDeployment`].
+static XBNB_BSC: Lazy<USDCDeployment> = Lazy::new(|| {
+    USDCDeployment(TokenDeployment {
+        asset: TokenAsset {
+            address: address!("0x4020BbbbBBbbBBBbBBBBBbBbbBbBbbBBbBb56000").into(),
+            network: Network::Bsc,
+        },
+        decimals: 18,
+        eip712: Some(TokenDeploymentEip712 {
+            name: "x402 BNB".into(),
+            version: "1".into(),
+        }),
+    })
+});
+
 /// A known USDC deployment as a wrapper around [`TokenDeployment`].
 #[derive(Clone, Debug)]
 pub struct USDCDeployment(pub TokenDeployment);
@@ -322,6 +364,8 @@ impl USDCDeployment {
             Network::Polygon => &USDC_POLYGON,
             Network::Sei => &USDC_SEI,
             Network::SeiTestnet => &USDC_SEI_TESTNET,
+            Network::BscTestnet => &XBNB_BSC_TESTNET,
+            Network::Bsc => &XBNB_BSC,
         }
     }
 }
