@@ -166,9 +166,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sig_down = SigDown::try_new()?;
     let axum_cancellation_token = sig_down.cancellation_token();
     let axum_graceful_shutdown = async move { axum_cancellation_token.cancelled().await };
-    axum::serve(listener, http_endpoints)
-        .with_graceful_shutdown(axum_graceful_shutdown)
-        .await?;
+    axum::serve(
+        listener,
+        http_endpoints.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(axum_graceful_shutdown)
+    .await?;
 
     Ok(())
 }

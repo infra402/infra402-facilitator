@@ -4,7 +4,7 @@
 
 use axum::{
     body::Body,
-    extract::Request,
+    extract::{ConnectInfo, Request},
     http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
@@ -117,10 +117,10 @@ fn extract_ip_from_request(req: &Request<Body>) -> Option<IpAddr> {
         }
     }
 
-    // Fallback to peer address
+    // Fallback to peer address from ConnectInfo
     req.extensions()
-        .get::<std::net::SocketAddr>()
-        .map(|addr| addr.ip())
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip())
 }
 
 #[cfg(test)]
