@@ -505,6 +505,8 @@ where
                         transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
                     }
                 }
+                // Drop contract to release provider clone after multicall completes
+                drop(contract);
             }
             StructuredSignature::EIP1271(signature) => {
                 // It is EOA or EIP-1271 signature, which we can pass to the transfer simulation
@@ -548,6 +550,8 @@ where
                             .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                     }
                 }
+                // Drop contract to release provider clone after call completes
+                drop(contract);
             }
         }
 
@@ -589,23 +593,40 @@ where
             } => {
                 let is_contract_deployed = is_contract_deployed(self.inner(), &payer).await?;
                 let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
+
+                // Extract all necessary data before dropping contract
+                let tx_target = transfer_call.tx.target();
+                let tx_calldata = transfer_call.tx.calldata().clone();
+                let span_from = transfer_call.from;
+                let span_to = transfer_call.to;
+                let span_value = transfer_call.value;
+                let span_valid_after = transfer_call.valid_after;
+                let span_valid_before = transfer_call.valid_before;
+                let span_nonce = transfer_call.nonce;
+                let span_signature = transfer_call.signature.clone();
+                let span_contract_address = transfer_call.contract_address;
+
+                // Drop transfer_call and contract to release provider clone
+                drop(transfer_call);
+                drop(contract);
+
                 if is_contract_deployed {
                     // transferWithAuthorization with inner signature
                     self.send_transaction(MetaTransaction {
-                        to: transfer_call.tx.target(),
-                        calldata: transfer_call.tx.calldata().clone(),
+                        to: tx_target,
+                        calldata: tx_calldata,
                         confirmations: 1,
                     })
                     .instrument(
                         tracing::info_span!("call_transferWithAuthorization_0",
-                            from = %transfer_call.from,
-                            to = %transfer_call.to,
-                            value = %transfer_call.value,
-                            valid_after = %transfer_call.valid_after,
-                            valid_before = %transfer_call.valid_before,
-                            nonce = %transfer_call.nonce,
-                            signature = %transfer_call.signature,
-                            token_contract = %transfer_call.contract_address,
+                            from = %span_from,
+                            to = %span_to,
+                            value = %span_value,
+                            valid_after = %span_valid_after,
+                            valid_before = %span_valid_before,
+                            nonce = %span_nonce,
+                            signature = %span_signature,
+                            token_contract = %span_contract_address,
                             sig_kind="EIP6492.deployed",
                             otel.kind = "client",
                         ),
@@ -619,8 +640,8 @@ where
                     };
                     let transfer_with_authorization_call = IMulticall3::Call3 {
                         allowFailure: false,
-                        target: transfer_call.tx.target(),
-                        callData: transfer_call.tx.calldata().clone(),
+                        target: tx_target,
+                        callData: tx_calldata,
                     };
                     let aggregate_call = IMulticall3::aggregate3Call {
                         calls: vec![deployment_call, transfer_with_authorization_call],
@@ -632,14 +653,14 @@ where
                     })
                     .instrument(
                         tracing::info_span!("call_transferWithAuthorization_0",
-                            from = %transfer_call.from,
-                            to = %transfer_call.to,
-                            value = %transfer_call.value,
-                            valid_after = %transfer_call.valid_after,
-                            valid_before = %transfer_call.valid_before,
-                            nonce = %transfer_call.nonce,
-                            signature = %transfer_call.signature,
-                            token_contract = %transfer_call.contract_address,
+                            from = %span_from,
+                            to = %span_to,
+                            value = %span_value,
+                            valid_after = %span_valid_after,
+                            valid_before = %span_valid_before,
+                            nonce = %span_nonce,
+                            signature = %span_signature,
+                            token_contract = %span_contract_address,
                             sig_kind="EIP6492.counterfactual",
                             otel.kind = "client",
                         ),
@@ -649,22 +670,39 @@ where
             StructuredSignature::EIP1271(eip1271_signature) => {
                 let transfer_call =
                     transferWithAuthorization_0(&contract, &payment, eip1271_signature).await?;
+
+                // Extract all necessary data before dropping contract
+                let tx_target = transfer_call.tx.target();
+                let tx_calldata = transfer_call.tx.calldata().clone();
+                let span_from = transfer_call.from;
+                let span_to = transfer_call.to;
+                let span_value = transfer_call.value;
+                let span_valid_after = transfer_call.valid_after;
+                let span_valid_before = transfer_call.valid_before;
+                let span_nonce = transfer_call.nonce;
+                let span_signature = transfer_call.signature.clone();
+                let span_contract_address = transfer_call.contract_address;
+
+                // Drop transfer_call and contract to release provider clone
+                drop(transfer_call);
+                drop(contract);
+
                 // transferWithAuthorization with eip1271 signature
                 self.send_transaction(MetaTransaction {
-                    to: transfer_call.tx.target(),
-                    calldata: transfer_call.tx.calldata().clone(),
+                    to: tx_target,
+                    calldata: tx_calldata,
                     confirmations: 1,
                 })
                 .instrument(
                     tracing::info_span!("call_transferWithAuthorization_0",
-                        from = %transfer_call.from,
-                        to = %transfer_call.to,
-                        value = %transfer_call.value,
-                        valid_after = %transfer_call.valid_after,
-                        valid_before = %transfer_call.valid_before,
-                        nonce = %transfer_call.nonce,
-                        signature = %transfer_call.signature,
-                        token_contract = %transfer_call.contract_address,
+                        from = %span_from,
+                        to = %span_to,
+                        value = %span_value,
+                        valid_after = %span_valid_after,
+                        valid_before = %span_valid_before,
+                        nonce = %span_nonce,
+                        signature = %span_signature,
+                        token_contract = %span_contract_address,
                         sig_kind="EIP1271",
                         otel.kind = "client",
                     ),
