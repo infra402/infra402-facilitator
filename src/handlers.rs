@@ -11,7 +11,7 @@
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{Html, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router, response::IntoResponse};
 use serde_json::json;
@@ -80,11 +80,53 @@ pub fn admin_routes() -> Router {
         .route("/admin/stats", get(get_admin_stats))
 }
 
-/// `GET /`: Returns a simple greeting message from the facilitator.
+/// `GET /`: Returns API information with links to all available endpoints.
 #[instrument(skip_all)]
 pub async fn get_root() -> impl IntoResponse {
-    let pkg_name = env!("CARGO_PKG_NAME");
-    (StatusCode::OK, format!("Hello from {pkg_name}!"))
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    let pkg_description = env!("CARGO_PKG_DESCRIPTION");
+
+    let html = format!(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Multi-chain x402 Facilitator by Infra402</title>
+</head>
+<body>
+    <h1>Multi-chain x402 Facilitator by Infra402</h1>
+    <p>Version: {pkg_version}</p>
+    <p>{pkg_description}</p>
+
+    <h2>Available Endpoints</h2>
+    <ul>
+        <li>
+            <a href="/">/</a> (GET) - API root with endpoint information
+        </li>
+        <li>
+            <a href="/health">/health</a> (GET) - Health check endpoint - returns supported networks and payment schemes
+        </li>
+        <li>
+            <a href="/supported">/supported</a> (GET) - Lists all supported payment schemes and blockchain networks
+        </li>
+        <li>
+            <a href="/verify">/verify</a> (GET) - Returns endpoint information for POST /verify
+        </li>
+        <li>
+            /verify (POST) - Verify payment payload signatures and requirements (currently no API key required, rate limits applied)
+        </li>
+        <li>
+            <a href="/settle">/settle</a> (GET) - Returns endpoint information for POST /settle
+        </li>
+        <li>
+            /settle (POST) - Submit verified payment to blockchain for on-chain settlement (currently no API key required, rate limits applied)
+        </li>
+    </ul>
+
+    <p>Documentation: <a href="https://github.com/infra402/infra402-facilitator">https://github.com/infra402/infra402-facilitator</a></p>
+</body>
+</html>"#);
+
+    (StatusCode::OK, Html(html)).into_response()
 }
 
 /// `GET /admin/stats`: Returns abuse detection statistics.
