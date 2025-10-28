@@ -24,9 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/x402-rs /usr/local/bin/x402-rs
+COPY --from=builder /app/target/release/infra402-facilitator /usr/local/bin/infra402-facilitator
 
 EXPOSE $PORT
 ENV RUST_LOG=info
 
-ENTRYPOINT ["x402-rs"]
+ENTRYPOINT ["infra402-facilitator"]

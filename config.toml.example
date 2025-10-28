@@ -4,7 +4,7 @@
 # Copy this file to `config.toml` and customize as needed.
 #
 # Configuration file location can be specified via CONFIG_FILE environment variable:
-#   CONFIG_FILE=/path/to/config.toml x402-rs
+#   CONFIG_FILE=/path/to/config.toml infra402-facilitator
 #
 # Default location: ./config.toml (in current directory)
 

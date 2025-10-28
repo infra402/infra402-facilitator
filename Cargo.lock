@@ -3007,6 +3007,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "infra402-facilitator"
+version = "0.0.1"
+dependencies = [
+ "alloy",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "bincode",
+ "config",
+ "dashmap 6.1.0",
+ "dotenvy",
+ "ipnetwork",
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry-stdout",
+ "opentelemetry_sdk",
+ "regex",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "solana-client",
+ "solana-commitment-config",
+ "solana-sdk",
+ "spl-token",
+ "spl-token-2022 9.0.0",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.22",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-core",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9040,16 +9081,16 @@ dependencies = [
 [[package]]
 name = "x402-rs"
 version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f923bf74a681aff767f3c0afe225fa08fe8d279bed0b0ff31c71efc424507e4"
 dependencies = [
  "alloy",
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bincode",
- "config",
  "dashmap 6.1.0",
  "dotenvy",
- "ipnetwork",
  "once_cell",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -9068,8 +9109,6 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
- "toml 0.8.22",
- "tower",
  "tower-http",
  "tracing",
  "tracing-core",

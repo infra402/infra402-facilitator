@@ -1,268 +1,65 @@
-# x402-rs
+# infra402-facilitator
 
-[![Crates.io](https://img.shields.io/crates/v/x402-rs.svg)](https://crates.io/crates/x402-rs)
-[![Docs.rs](https://docs.rs/x402-rs/badge.svg)](https://docs.rs/x402-rs)
-[![Docker Pulls](https://img.shields.io/docker/pulls/ukstv/x402-facilitator.svg)](https://hub.docker.com/r/ukstv/x402-facilitator)
-[![GHCR](https://img.shields.io/badge/ghcr.io-x402--facilitator-blue)](https://github.com/orgs/x402-rs/packages)
+> Production-ready x402 facilitator with enterprise-grade security features, abuse detection, rate limiting, and multi-chain support.
 
-> A Rust-based implementation of the x402 protocol.
+A hardened x402 payment facilitator built on [x402-rs](https://github.com/x402-rs/x402-rs), enhanced with comprehensive security middleware for production deployments.
 
-This repository provides:
+## Features
 
-- `x402-rs` (current crate):
-  - Core protocol types, facilitator traits, and logic for on-chain payment verification and settlement
-  - Facilitator binary - production-grade HTTP server to verify and settle x402 payments
-- [`x402-axum`](./crates/x402-axum) - Axum middleware for accepting x402 payments,
-- [`x402-reqwest`](./crates/x402-reqwest) - Wrapper for reqwest for transparent x402 payments,
-- [`x402-axum-example`](./examples/x402-axum-example) - an example of `x402-axum` usage.
-- [`x402-reqwest-example`](./examples/x402-reqwest-example) - an example of `x402-reqwest` usage.
+### Core x402 Protocol
+- **Payment Verification**: Cryptographic validation of x402 payment payloads
+- **Payment Settlement**: On-chain transaction submission and monitoring
+- **Multi-Chain Support**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
+- **Protocol Compliance**: Full x402 spec implementation with SDK compatibility
 
-## About x402
+### Security Features
+- **Rate Limiting**: Token bucket algorithm with per-IP tracking and automatic bans
+- **Abuse Detection**: Tracks invalid signatures, malformed payloads, and suspicious patterns
+- **API Key Authentication**: Bearer token auth for `/verify` and `/settle` endpoints
+- **Admin Authentication**: Separate admin key for monitoring and statistics endpoints
+- **IP Filtering**: Allow/block lists with CIDR support
+- **Request Validation**: Size limits and malformed payload detection
+- **CORS Control**: Configurable origin restrictions
 
-The [x402 protocol](https://docs.cdp.coinbase.com/x402/docs/overview) is a proposed standard for making blockchain payments directly through HTTP using native `402 Payment Required` status code.
+### Operations & Observability
+- **OpenTelemetry**: Full tracing and metrics export (Honeycomb, Prometheus, Grafana)
+- **Security Logging**: Detailed audit trail of rate limits, auth failures, and abuse
+- **Admin Dashboard**: Real-time statistics via `/admin/stats` endpoint
+- **Background Cleanup**: Automatic memory management for tracking data
+- **Docker Ready**: Optimized multi-stage builds with minimal runtime dependencies
 
-Servers declare payment requirements for specific routes. Clients send cryptographically signed payment payloads. Facilitators verify and settle payments on-chain.
+## Quick Start
 
-## Getting Started
+### Run with Docker (TBA)
 
-### Run facilitator
+### Basic Configuration
 
-```shell
-docker run --env-file .env -p 8080:8080 ukstv/x402-facilitator
-```
+Create a `.env` file:
 
-Or build locally:
-```shell
-docker build -t x402-rs .
-docker run --env-file .env -p 8080:8080 x402-rs
-```
-
-See the [Facilitator](#facilitator) section below for full usage details
-
-### Protect Axum Routes
-
-Use `x402-axum` to gate your routes behind on-chain payments:
-
-```rust
-let x402 = X402Middleware::try_from("https://x402.org/facilitator/").unwrap();
-let usdc = USDCDeployment::by_network(Network::BaseSepolia);
-
-let app = Router::new().route("/paid-content", get(handler).layer( 
-        x402.with_price_tag(usdc.amount("0.025").pay_to("0xYourAddress").unwrap())
-    ),
-);
-```
-
-See [`x402-axum` crate docs](./crates/x402-axum/README.md).
-
-### Send x402 payments
-
-Use `x402-reqwest` to send payments:
-
-```rust
-let signer: PrivateKeySigner = "0x...".parse()?; // never hardcode real keys!
-
-let client = reqwest::Client::new()
-    .with_payments(signer)
-    .prefer(USDCDeployment::by_network(Network::Base))
-    .max(USDCDeployment::by_network(Network::Base).amount("1.00")?)
-    .build();
-
-let res = client
-    .get("https://example.com/protected")
-    .send()
-    .await?;
-```
-
-See [`x402-reqwest` crate docs](./crates/x402-reqwest/README.md).
-
-## Roadmap
-
-| Milestone                           | Description                                                                                              |   Status   |
-|:------------------------------------|:---------------------------------------------------------------------------------------------------------|:----------:|
-| Facilitator for Base USDC           | Payment verification and settlement service, enabling real-time pay-per-use transactions for Base chain. | ✅ Complete |
-| Metrics and Tracing                 | Expose OpenTelemetry metrics and structured tracing for observability, monitoring, and debugging         | ✅ Complete |
-| Server Middleware                   | Provide ready-to-use integration for Rust web frameworks such as axum and tower.                         | ✅ Complete |
-| Client Library                      | Provide a lightweight Rust library for initiating and managing x402 payment flows from Rust clients.     | ✅ Complete |
-| Solana Support                      | Support Solana chain.                                                                                    | ✅ Complete |
-| Multiple chains and multiple tokens | Support various tokens and EVM compatible chains.                                                        | ⏳ Planned  |
-| Payment Storage                     | Persist verified and settled payments for analytics, access control, and auditability.                   | 🔜 Planned |
-| Micropayment Support                | Enable fine-grained offchain usage-based payments, including streaming and per-request billing.          | 🔜 Planned |
-
-The initial focus is on establishing a stable, production-quality Rust SDK and middleware ecosystem for x402 integration.
-
-## Facilitator
-
-The `x402-rs` crate (this repo) provides a runnable x402 facilitator binary. The _Facilitator_ role simplifies adoption of x402 by handling:
-- **Payment verification**: Confirming that client-submitted payment payloads match the declared requirements.
-- **Payment settlement**: Submitting validated payments to the blockchain and monitoring their confirmation.
-
-By using a Facilitator, servers (sellers) do not need to:
-- Connect directly to a blockchain.
-- Implement complex cryptographic or blockchain-specific payment logic.
-
-Instead, they can rely on the Facilitator to perform verification and settlement, reducing operational overhead and accelerating x402 adoption.
-The Facilitator **never holds user funds**. It acts solely as a stateless verification and execution layer for signed payment payloads.
-
-For a detailed overview of the x402 payment flow and Facilitator role, see the [x402 protocol documentation](https://docs.cdp.coinbase.com/x402/docs/overview).
-
-### Usage
-
-#### 1. Provide environment variables
-
-Create a `.env` file or set environment variables directly. Example `.env`:
-
-```dotenv
+```bash
+# Server
 HOST=0.0.0.0
 PORT=8080
+
+# Blockchain RPCs
 RPC_URL_BASE_SEPOLIA=https://sepolia.base.org
 RPC_URL_BASE=https://mainnet.base.org
+
+# Signer
 SIGNER_TYPE=private-key
-EVM_PRIVATE_KEY=0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-SOLANA_PRIVATE_KEY=6ASf5EcmmEHTgDJ4X4ZT5vT6iHVJBXPg5AN5YoTCpGWt
+EVM_PRIVATE_KEY=0xYourPrivateKeyHere
+
+# Security (optional)
+API_KEYS=your-secret-api-key
+ADMIN_API_KEY=your-admin-key
+
+# Observability (optional)
 RUST_LOG=info
 ```
 
-**Important:**
-The supported networks are determined by which RPC URLs you provide:
-- If you set only `RPC_URL_BASE_SEPOLIA`, then only Base Sepolia network is supported.
-- If you set both `RPC_URL_BASE_SEPOLIA` and `RPC_URL_BASE`, then both Base Sepolia and Base Mainnet are supported.
-- If an RPC URL for a network is missing, that network will not be available for settlement or verification.
-
-#### 2. Build and Run with Docker
-
-Prebuilt Docker images are available at:
-- [GitHub Container Registry](https://ghcr.io/x402-rs/x402-facilitator): `ghcr.io/x402-rs/x402-facilitator`
-- [Docker Hub](https://hub.docker.com/r/ukstv/x402-facilitator): `ukstv/x402-facilitator`
-
-Run the container from Docker Hub:
-```shell
-docker run --env-file .env -p 8080:8080 ukstv/x402-facilitator
-```
-
-To run using GitHub Container Registry:
-```shell
-docker run --env-file .env -p 8080:8080 ghcr.io/x402-rs/x402-facilitator
-```
-
-Or build a Docker image locally:
-```shell
-docker build -t x402-rs .
-docker run --env-file .env -p 8080:8080 x402-rs
-```
-
-The container:
-* Exposes port `8080` (or a port you configure with `PORT` environment variable).
-* Starts on http://localhost:8080 by default.
-* Requires minimal runtime dependencies (based on `debian:bullseye-slim`).
-
-#### 3. Point your application to your Facilitator
-
-If you are building an x402-powered application, update the Facilitator URL to point to your self-hosted instance.
-
-> ℹ️ **Tip:** For production deployments, ensure your Facilitator is reachable via HTTPS and protect it against public abuse.
-
-<details>
-<summary>If you use Hono and x402-hono</summary>
-From [x402.org Quickstart for Sellers](https://x402.gitbook.io/x402/getting-started/quickstart-for-sellers):
-
-```typescript
-import { Hono } from "hono";
-import { serve } from "@hono/node-server";
-import { paymentMiddleware } from "x402-hono";
-
-const app = new Hono();
-
-// Configure the payment middleware
-app.use(paymentMiddleware(
-  "0xYourAddress", // Your receiving wallet address
-  {
-    "/protected-route": {
-      price: "$0.10",
-      network: "base-sepolia",
-      config: {
-        description: "Access to premium content",
-      }
-    }
-  },
-  {
-    url: "http://your-validator.url/", // 👈 Your self-hosted Facilitator
-  }
-));
-
-// Implement your protected route
-app.get("/protected-route", (c) => {
-  return c.json({ message: "This content is behind a paywall" });
-});
-
-serve({
-  fetch: app.fetch,
-  port: 3000
-});
-```
-
-</details>
-
-<details>
-<summary>If you use `x402-axum`</summary>
-
-```rust
-let x402 = X402Middleware::try_from("http://your-validator.url/").unwrap();  // 👈 Your self-hosted Facilitator
-let usdc = USDCDeployment::by_network(Network::BaseSepolia);
-
-let app = Router::new().route("/paid-content", get(handler).layer( 
-        x402.with_price_tag(usdc.amount("0.025").pay_to("0xYourAddress").unwrap())
-    ),
-);
-```
-
-</details>
-
-### Configuration
-
-The service reads configuration via `.env` file or directly through environment variables.
-
-Available variables:
-
-* `RUST_LOG`: Logging level (e.g., `info`, `debug`, `trace`),
-* `HOST`: HTTP host to bind to (default: `0.0.0.0`),
-* `PORT`: HTTP server port (default: `8080`),
-* `SIGNER_TYPE` (required): Type of signer to use. Only `private-key` is supported now,
-* `EVM_PRIVATE_KEY` (required): Private key in hex for EVM networks, like `0xdeadbeef...`,
-* `SOLANA_PRIVATE_KEY` (required): Private key in hex for Solana networks, like `0xdeadbeef...`,
-* `RPC_URL_BASE_SEPOLIA`: Ethereum RPC endpoint for Base Sepolia testnet,
-* `RPC_URL_BASE`: Ethereum RPC endpoint for Base mainnet,
-* `RPC_URL_AVALANCHE_FUJI`: Ethereum RPC endpoint for Avalanche Fuji testnet,
-* `RPC_URL_AVALANCHE`: Ethereum RPC endpoint for Avalanche C-Chain mainnet.
-* `RPC_URL_SOLANA`: RPC endpoint for Solana mainnet.
-* `RPC_URL_SOLANA_DEVNET`: RPC endpoint for Solana devnet.
-* `RPC_URL_POLYGON`: RPC endpoint for Polygon mainnet.
-* `RPC_URL_POLYGON_AMOY`: RPC endpoint for Polygon Amoy testnet.
-* `RPC_URL_SEI`: RPC endpoint for Sei mainnet.
-* `RPC_URL_SEI_TESTNET`: RPC endpoint for Sei testnet.
-* `RPC_URL_BSC`: RPC endpoint for BSC mainnet.
-* `RPC_URL_BSC_TESTNET`: RPC endpoint for BSC testnet.
-
-#### Security Configuration
-
-**API Key Authentication (optional):**
-* `API_KEYS`: Comma-separated list of valid API keys for authentication. If set, API key authentication is **required** for `/verify` and `/settle` endpoints. Format: `Authorization: Bearer <key>`.
-* `CONFIG_FILE`: Path to TOML configuration file (default: `./config.toml`).
-
-**Configuration File (`config.toml`):**
-
-The facilitator supports optional TOML-based configuration for security features. Create a `config.toml` file (see `config.toml.example`) to configure:
-
-- **Rate Limiting**: Per-IP request limits with automatic temporary bans
-- **IP Filtering**: Allow/block specific IP addresses or CIDR ranges
-- **CORS Control**: Restrict cross-origin requests to specific origins
-- **Request Limits**: Maximum request body size
-- **Security Events**: Logging and abuse detection
-
-**Quick Example:**
+Create a `config.toml` (copy from `config.toml.example`):
 
 ```toml
-# config.toml
 [rate_limiting]
 enabled = true
 requests_per_second = 10
@@ -272,110 +69,382 @@ ban_threshold = 5
 [cors]
 allowed_origins = ["https://yourdomain.com"]
 
-[ip_filtering]
-allowed_ips = []  # empty = allow all
-blocked_ips = []  # empty = block none
+[security]
+log_security_events = true
+cleanup_interval_seconds = 300
+```
 
+### Build Locally
+
+```bash
+cargo build --release
+./target/release/infra402-facilitator
+```
+
+## API Endpoints
+
+### Public Endpoints
+- `GET /` - Service greeting
+- `GET /health` - Health check
+- `GET /supported` - List supported networks and payment schemes
+
+### Payment Endpoints (API key required if `API_KEYS` set)
+- `POST /verify` - Verify payment payload cryptographic signatures
+- `POST /settle` - Submit verified payment to blockchain
+
+### Admin Endpoints (admin key required)
+- `GET /admin/stats` - Security statistics (tracked IPs, suspicious activity)
+
+### Example: Verify Payment
+
+```bash
+curl -X POST https://facilitator.example.com/verify \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "paymentPayload": {...},
+    "paymentRequirements": {...}
+  }'
+```
+
+### Example: Admin Stats
+
+```bash
+curl https://facilitator.example.com/admin/stats \
+  -H "X-Admin-Key: your-admin-key"
+```
+
+Response:
+```json
+{
+  "total_ips_tracked": 42,
+  "suspicious_ips": 3
+}
+```
+
+## Security Configuration
+
+### API Key Authentication
+
+Protect `/verify` and `/settle` endpoints:
+
+```bash
+export API_KEYS="key1,key2,key3"
+```
+
+Clients must include:
+```
+Authorization: Bearer <key>
+```
+
+### Admin Authentication
+
+Protect admin endpoints:
+
+```bash
+export ADMIN_API_KEY="your-admin-secret"
+```
+
+Clients must include:
+```
+X-Admin-Key: <key>
+```
+
+### Rate Limiting
+
+Configure in `config.toml`:
+
+```toml
+[rate_limiting]
+enabled = true
+requests_per_second = 10          # Global limit per IP
+ban_duration_seconds = 300         # 5 minute ban after violations
+ban_threshold = 5                  # Violations before ban
+
+[rate_limiting.endpoints]
+verify = 5                         # Override for /verify
+settle = 2                         # Override for /settle
+```
+
+**Behavior:**
+- Exceeding rate limit returns `429 Too Many Requests`
+- After `ban_threshold` violations, IP is temporarily banned
+- Bans auto-expire after `ban_duration_seconds`
+
+### IP Filtering
+
+```toml
+[ip_filtering]
+allowed_ips = [
+    "192.168.1.0/24",    # Internal network
+    "10.0.0.1",          # Specific trusted IP
+]
+
+blocked_ips = [
+    "192.0.2.0/24",      # Known malicious range
+]
+```
+
+- Empty `allowed_ips` = allow all (default)
+- Blocked IPs always rejected, regardless of allow list
+- Supports IPv4, IPv6, and CIDR notation
+
+### CORS Control
+
+```toml
+[cors]
+allowed_origins = [
+    "https://app.example.com",
+    "https://dashboard.example.com",
+]
+```
+
+Empty list = allow all origins (`*`)
+
+### Request Limits
+
+```toml
 [request]
 max_body_size_bytes = 1048576  # 1 MB
+```
 
+Prevents large payload attacks.
+
+## Supported Networks
+
+Configure networks via RPC environment variables:
+
+| Network                | Environment Variable       | Status |
+|:-----------------------|:---------------------------|:------:|
+| Base Sepolia Testnet   | `RPC_URL_BASE_SEPOLIA`     | ✅      |
+| Base Mainnet           | `RPC_URL_BASE`             | ✅      |
+| BSC Testnet            | `RPC_URL_BSC_TESTNET`      | ✅      |
+| BSC Mainnet            | `RPC_URL_BSC`              | ✅      |
+| Solana Devnet          | `RPC_URL_SOLANA_DEVNET`    | ✅      |
+| Solana Mainnet         | `RPC_URL_SOLANA`           | ✅      |
+| Avalanche Fuji Testnet | `RPC_URL_AVALANCHE_FUJI`   | ✅      |
+| Avalanche C-Chain      | `RPC_URL_AVALANCHE`        | ✅      |
+| Polygon Amoy Testnet   | `RPC_URL_POLYGON_AMOY`     | ✅      |
+| Polygon Mainnet        | `RPC_URL_POLYGON`          | ✅      |
+| Sei Testnet            | `RPC_URL_SEI_TESTNET`      | ✅      |
+| Sei Mainnet            | `RPC_URL_SEI`              | ✅      |
+| XDC Mainnet            | `RPC_URL_XDC`              | ✅      |
+
+Only networks with configured RPC URLs will be available.
+
+## Observability
+
+### OpenTelemetry Export
+
+Configure via environment variables:
+
+```bash
+# Honeycomb example
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io:443
+OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY,x-honeycomb-dataset=infra402-facilitator
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+Emits structured traces with:
+- HTTP method, status, URI
+- Latency measurements
+- Request/response metadata
+- Security events (rate limits, auth failures)
+
+### Security Event Logging
+
+Enable in `config.toml`:
+
+```toml
 [security]
 log_security_events = true
 ```
 
-**Production Recommendations:**
+Logs include:
+- Rate limit violations
+- Authentication failures
+- IP blocks/bans
+- Invalid signatures
+- Suspicious activity patterns
 
-1. ✅ Enable API key authentication:
-   ```bash
-   export API_KEYS="$(openssl rand -hex 32)"
-   ```
-
-2. ✅ Restrict CORS origins in `config.toml`:
-   ```toml
-   [cors]
-   allowed_origins = ["https://yourdomain.com"]
-   ```
-
-3. ✅ Enable rate limiting to prevent abuse
-
-4. ✅ Deploy behind HTTPS reverse proxy (Nginx, Caddy, Cloudflare)
-
-5. ✅ Monitor security logs:
-   ```bash
-   RUST_LOG=info x402-rs | grep -E "(banned|blocked|unauthorized)"
-   ```
-
-**See [docs/SECURITY.md](docs/SECURITY.md) for complete security documentation.**
-
-### Observability
-
-The facilitator emits [OpenTelemetry](https://opentelemetry.io)-compatible traces and metrics to standard endpoints,
-making it easy to integrate with tools like Honeycomb, Prometheus, Grafana, and others.
-Tracing spans are annotated with HTTP method, status code, URI, latency, other request and process metadata.
-
-To enable tracing and metrics export, set the appropriate `OTEL_` environment variables:
-
-```dotenv
-# For Honeycomb, for example:
-# Endpoint URL for sending OpenTelemetry traces and metrics
-OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io:443
-# Comma-separated list of key=value pairs to add as headers
-OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=your_api_key,x-honeycomb-dataset=x402-rs
-# Export protocol to use for telemetry. Supported values: `http/protobuf` (default), `grpc`
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+**Filter security logs:**
+```bash
+RUST_LOG=info infra402-facilitator | grep -E "(banned|blocked|unauthorized|suspicious)"
 ```
 
-The service automatically detects and initializes exporters if `OTEL_EXPORTER_OTLP_*` variables are provided.
+## Deployment
 
-### Supported Networks
+### Production Checklist
 
-The Facilitator supports different networks based on the environment variables you configure:
+- ✅ Enable API key authentication (`API_KEYS`)
+- ✅ Set admin key (`ADMIN_API_KEY`)
+- ✅ Restrict CORS origins in `config.toml`
+- ✅ Enable rate limiting
+- ✅ Deploy behind HTTPS reverse proxy (Nginx, Caddy, Cloudflare)
+- ✅ Configure OpenTelemetry for monitoring
+- ✅ Set up log aggregation for security events
+- ✅ Test rate limiting and IP filtering before production
 
-| Network                   | Environment Variable     | Supported if Set | Notes                            |
-|:--------------------------|:-------------------------|:-----------------|:---------------------------------|
-| Base Sepolia Testnet      | `RPC_URL_BASE_SEPOLIA`   | ✅                | Testnet, Recommended for testing |
-| Base Mainnet              | `RPC_URL_BASE`           | ✅                | Mainnet                          |
-| XDC Mainnet               | `RPC_URL_XDC`            | ✅                | Mainnet                          |
-| Avalanche Fuji Testnet    | `RPC_URL_AVALANCHE_FUJI` | ✅                | Testnet                          |
-| Avalanche C-Chain Mainnet | `RPC_URL_AVALANCHE`      | ✅                | Mainnet                          |
-| Polygon Amoy Testnet      | `RPC_URL_POLYGON_AMOY`   | ✅                | Testnet                          |
-| Polygon Mainnet           | `RPC_URL_POLYGON`        | ✅                | Mainnet                          |
-| Sei Testnet               | `RPC_URL_SEI_TESTNET`    | ✅                | Testnet                          |
-| Sei Mainnet               | `RPC_URL_SEI`            | ✅                | Mainnet                          |
-| BSC Testnet               | `RPC_URL_BSC_TESTNET`    | ✅                | Testnet                          |
-| BSC Mainnet               | `RPC_URL_BSC`            | ✅                | Mainnet                          |
-| Solana Mainnet            | `RPC_URL_SOLANA`         | ✅                | Mainnet                          |
-| Solana Devnet             | `RPC_URL_SOLANA_DEVNET`  | ✅                | Testnet, Recommended for testing |
+### Docker Compose Example
 
-- If you provide say only `RPC_URL_BASE_SEPOLIA`, only **Base Sepolia** will be available.
-- If you provide `RPC_URL_BASE_SEPOLIA`, `RPC_URL_BASE`, and other env variables on the list, then all the specified networks will be supported.
+```yaml
+version: '3.8'
+services:
+  facilitator:
+    image: ghcr.io/infra402-facilitator:latest
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./config.toml:/app/config.toml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
 
-> ℹ️ **Tip:** For initial development and testing, you can start with Base Sepolia only.
+### Behind Nginx
 
-### Development
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name facilitator.example.com;
 
-Prerequisites:
+    ssl_certificate /etc/ssl/certs/facilitator.crt;
+    ssl_certificate_key /etc/ssl/private/facilitator.key;
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+## Environment Variables
+
+### Required
+- `SIGNER_TYPE`: Signer type (currently only `private-key` supported)
+- `EVM_PRIVATE_KEY`: Hex-encoded private key for EVM chains
+- `SOLANA_PRIVATE_KEY`: Base58-encoded private key for Solana (if using Solana)
+
+### Server
+- `HOST`: Bind address (default: `0.0.0.0`)
+- `PORT`: HTTP port (default: `8080`)
+
+### Security (optional)
+- `API_KEYS`: Comma-separated list of valid API keys
+- `ADMIN_API_KEY`: Admin authentication key
+- `CONFIG_FILE`: Path to config.toml (default: `./config.toml`)
+
+### Network RPCs (configure as needed)
+- `RPC_URL_BASE`, `RPC_URL_BASE_SEPOLIA`
+- `RPC_URL_BSC`, `RPC_URL_BSC_TESTNET`
+- `RPC_URL_SOLANA`, `RPC_URL_SOLANA_DEVNET`
+- `RPC_URL_AVALANCHE`, `RPC_URL_AVALANCHE_FUJI`
+- `RPC_URL_POLYGON`, `RPC_URL_POLYGON_AMOY`
+- `RPC_URL_SEI`, `RPC_URL_SEI_TESTNET`
+- `RPC_URL_XDC`
+
+### Observability (optional)
+- `RUST_LOG`: Log level (default: `info`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: OpenTelemetry collector endpoint
+- `OTEL_EXPORTER_OTLP_HEADERS`: Headers for OTLP export
+- `OTEL_EXPORTER_OTLP_PROTOCOL`: Protocol (`http/protobuf` or `grpc`)
+
+See [`.env.example`](.env.example) for complete configuration template.
+
+## Documentation
+
+- [Original x402-rs README](README.x402-rs.md) - Core x402 protocol documentation
+- [Security Documentation](docs/SECURITY.md) - Complete security feature reference
+- [Configuration Examples](config.toml.example) - Full config reference
+
+## About x402
+
+The [x402 protocol](https://docs.cdp.coinbase.com/x402/docs/overview) is a standard for making blockchain payments through HTTP using the `402 Payment Required` status code.
+
+**Flow:**
+1. Client requests protected resource
+2. Server responds with `402 Payment Required` and payment requirements
+3. Client creates signed payment payload
+4. Facilitator verifies signature and payment details
+5. Facilitator settles payment on-chain
+6. Server grants access to resource
+
+**Benefits:**
+- No server-side blockchain integration required
+- Cryptographic payment verification
+- Stateless facilitator architecture (never holds funds)
+- Compatible with existing HTTP tooling
+
+## Credits
+
+Built on [x402-rs](https://github.com/x402-rs/x402-rs) by Sergey Ukustov.
+
+This repository extends x402-rs with production-ready security features:
+- Abuse detection middleware
+- Enhanced rate limiting with token bucket algorithm
+- Admin authentication and monitoring
+- Background cleanup tasks
+- Enhanced IP filtering
+- Comprehensive security logging
+
+For the original x402-rs implementation and protocol details, see [README.x402-rs.md](README.x402-rs.md).
+
+## Resources
+
+- [x402 Protocol Specification](https://x402.org)
+- [x402 Overview by Coinbase](https://docs.cdp.coinbase.com/x402/docs/overview)
+- [Facilitator Documentation by Coinbase](https://docs.cdp.coinbase.com/x402/docs/facilitator)
+- [x402-rs Repository](https://github.com/x402-rs/x402-rs)
+
+## Development
+
+### Prerequisites
 - Rust 1.80+
-- `cargo` and a working toolchain
+- Cargo
 
-Build locally:
-```shell
+### Build
+
+```bash
 cargo build
 ```
-Run:
-```shell
+
+### Run Locally
+
+```bash
 cargo run
 ```
 
-## Related Resources
+### Run Tests
 
-* [x402 Protocol Documentation](https://x402.org)
-* [x402 Overview by Coinbase](https://docs.cdp.coinbase.com/x402/docs/overview)
-* [Facilitator Documentation by Coinbase](https://docs.cdp.coinbase.com/x402/docs/facilitator)
+```bash
+cargo test
+```
 
-## Contributions and feedback welcome!
-Feel free to open issues or pull requests to improve x402 support in the Rust ecosystem.
+### Build Docker Image
+
+```bash
+docker build -t infra402-facilitator .
+```
+
+## Contributing
+
+Contributions welcome! Please open issues or pull requests for:
+- Bug fixes
+- Security improvements
+- Documentation updates
+- Feature enhancements
 
 ## License
 
 [Apache-2.0](LICENSE)
+
+---
+
+**Security Disclosure:** For security vulnerabilities, please see [docs/SECURITY.md](docs/SECURITY.md#security-disclosure).
