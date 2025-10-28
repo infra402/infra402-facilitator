@@ -291,12 +291,12 @@ static USDC_SEI_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
 static XBNB_BSC_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
     USDCDeployment(TokenDeployment {
         asset: TokenAsset {
-            address: address!("0x0000000000000000000000000000000000000000").into(),
+            address: address!("0x1E11fF9f392dAAbFB8823F210624194298FCF3E2").into(),
             network: Network::BscTestnet,
         },
         decimals: 18,
         eip712: Some(TokenDeploymentEip712 {
-            name: "Wrapped Native Token".into(),
+            name: "x402 BNB".into(),
             version: "1".into(),
         }),
     })
@@ -306,7 +306,7 @@ static XBNB_BSC_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
 static XBNB_BSC: Lazy<USDCDeployment> = Lazy::new(|| {
     USDCDeployment(TokenDeployment {
         asset: TokenAsset {
-            address: address!("0x4020BbbbBBbbBBBbBBBBBbBbbBbBbbBBbBb56000").into(),
+            address: address!("0x1E11fF9f392dAAbFB8823F210624194298FCF3E2").into(),
             network: Network::Bsc,
         },
         decimals: 18,
