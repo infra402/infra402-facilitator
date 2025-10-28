@@ -5,3 +5,6 @@ crates/*/target/
 examples/*/.env
 .vscode/
 node_modules/
+.DS_Store
+*.swp
+logs.debug

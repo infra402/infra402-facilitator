@@ -331,11 +331,6 @@ impl MetaEvmProvider for EvmProvider {
                 .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
             txr.set_gas_price(gas);
         }
-        let pending_tx = self
-            .inner
-            .send_transaction(txr)
-            .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
 
         // Read receipt timeout from config or use default of 120 seconds
         let receipt_timeout_secs = crate::config::FacilitatorConfig::from_env()
@@ -344,7 +339,13 @@ impl MetaEvmProvider for EvmProvider {
             .unwrap_or(120);
         let receipt_timeout = Duration::from_secs(receipt_timeout_secs);
 
-        tokio::time::timeout(
+        let pending_tx = self
+            .inner
+            .send_transaction(txr)
+            .await
+            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+
+        let receipt = tokio::time::timeout(
             receipt_timeout,
             pending_tx
                 .with_required_confirmations(tx.confirmations)
@@ -354,7 +355,9 @@ impl MetaEvmProvider for EvmProvider {
         .map_err(|_| FacilitatorLocalError::ContractCall(
             format!("Transaction receipt timeout after {} seconds", receipt_timeout_secs)
         ))?
-        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))
+        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+
+        Ok(receipt)
     }
 }
 
@@ -709,7 +712,9 @@ where
                 )
             }
         };
+
         let receipt = transaction_receipt_fut.await?;
+
         let success = receipt.status();
         if success {
             tracing::event!(Level::INFO,
@@ -717,6 +722,7 @@ where
                 tx = %receipt.transaction_hash,
                 "transferWithAuthorization_0 succeeded"
             );
+
             Ok(SettleResponse {
                 success: true,
                 error_reason: None,
@@ -731,6 +737,7 @@ where
                 tx = %receipt.transaction_hash,
                 "transferWithAuthorization_0 failed"
             );
+
             Ok(SettleResponse {
                 success: false,
                 error_reason: Some(FacilitatorErrorReason::InvalidScheme),

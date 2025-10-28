@@ -221,7 +221,9 @@ pub async fn post_settle<F>(
 where
     F: Facilitator<Error = FacilitatorLocalError>,
 {
-    match facilitator.settle(&body).await {
+    let result = facilitator.settle(&body).await;
+
+    match result {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),
         Err(error) => {
             // Track invalid signatures for abuse detection
