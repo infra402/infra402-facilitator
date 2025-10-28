@@ -296,7 +296,7 @@ static XBNB_BSC_TESTNET: Lazy<USDCDeployment> = Lazy::new(|| {
         },
         decimals: 18,
         eip712: Some(TokenDeploymentEip712 {
-            name: "x402 BNB".into(),
+            name: "Wrapped Native Token".into(),
             version: "1".into(),
         }),
     })

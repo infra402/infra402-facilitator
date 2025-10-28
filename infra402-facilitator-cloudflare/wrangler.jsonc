@@ -46,7 +46,7 @@
 	"containers": [
 		{
 			"class_name": "MyContainer",
-			"image": "../Dockerfile",
+			"image": "../Dockerfile.cloudflare",
 			"max_instances": 10
 		}
 	],
@@ -66,5 +66,26 @@
 			"tag": "v1"
 		}
 	],
+    "env": {
+        // Use prebuilt image only for local dev
+        "devimg": {
+            "containers": [
+                {
+	                "name": "infra402-facilitator-cloudflare-dev",
+                    "class_name": "MyContainer",
+                    "image": "registry.cloudflare.com/117b2d0b5fb93cf7801dc117be461e4c/infra402-facilitator-cloudflare-mycontainer:79e984e5",
+                    "max_instances": 10
+                }
+            ],
+	        "durable_objects": {
+		        "bindings": [
+			        {
+				        "class_name": "MyContainer",
+				        "name": "MY_CONTAINER"
+			        }
+		        ]
+	        }
+        }
+    },
 	"upload_source_maps": true
 }

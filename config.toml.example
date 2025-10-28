@@ -95,6 +95,15 @@ log_security_events = true
 cleanup_interval_seconds = 300
 
 # ================================
+# Transaction Configuration
+# ================================
+[transaction]
+# Maximum time to wait for transaction receipt after submitting settlement transaction
+# If receipt is not found within this timeout, the /settle endpoint will return an error
+# Default: 120 seconds (2 minutes)
+receipt_timeout_seconds = 120
+
+# ================================
 # Environment Variables
 # ================================
 # The following settings are configured via environment variables (not in this file):

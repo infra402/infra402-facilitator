@@ -19,6 +19,7 @@ pub struct FacilitatorConfig {
     pub ip_filtering: IpFilteringConfig,
     pub request: RequestConfig,
     pub security: SecurityConfig,
+    pub transaction: TransactionConfig,
 }
 
 impl Default for FacilitatorConfig {
@@ -29,6 +30,7 @@ impl Default for FacilitatorConfig {
             ip_filtering: IpFilteringConfig::default(),
             request: RequestConfig::default(),
             security: SecurityConfig::default(),
+            transaction: TransactionConfig::default(),
         }
     }
 }
@@ -160,6 +162,24 @@ impl Default for SecurityConfig {
             health_endpoint_requires_auth: false,
             log_security_events: true,
             cleanup_interval_seconds: 300, // 5 minutes
+        }
+    }
+}
+
+/// Transaction-related configuration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TransactionConfig {
+    /// Maximum time to wait for transaction receipt after submitting settlement transaction.
+    /// If receipt is not found within this timeout, the /settle endpoint will return an error.
+    /// Default: 120 seconds (2 minutes).
+    pub receipt_timeout_seconds: u64,
+}
+
+impl Default for TransactionConfig {
+    fn default() -> Self {
+        Self {
+            receipt_timeout_seconds: 120, // 2 minutes
         }
     }
 }

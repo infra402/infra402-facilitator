@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{Instrument, instrument};
 use tracing_core::Level;
@@ -335,11 +336,25 @@ impl MetaEvmProvider for EvmProvider {
             .send_transaction(txr)
             .await
             .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
-        pending_tx
-            .with_required_confirmations(tx.confirmations)
-            .get_receipt()
-            .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))
+
+        // Read receipt timeout from config or use default of 120 seconds
+        let receipt_timeout_secs = crate::config::FacilitatorConfig::from_env()
+            .ok()
+            .map(|config| config.transaction.receipt_timeout_seconds)
+            .unwrap_or(120);
+        let receipt_timeout = Duration::from_secs(receipt_timeout_secs);
+
+        tokio::time::timeout(
+            receipt_timeout,
+            pending_tx
+                .with_required_confirmations(tx.confirmations)
+                .get_receipt()
+        )
+        .await
+        .map_err(|_| FacilitatorLocalError::ContractCall(
+            format!("Transaction receipt timeout after {} seconds", receipt_timeout_secs)
+        ))?
+        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))
     }
 }
 

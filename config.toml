@@ -93,3 +93,12 @@ log_security_events = true
 # This controls how often old tracking data is purged from memory
 # Default: 300 seconds (5 minutes)
 cleanup_interval_seconds = 3600
+
+# ================================
+# Transaction Configuration
+# ================================
+[transaction]
+# Maximum time to wait for transaction receipt after submitting settlement transaction
+# If receipt is not found within this timeout, the /settle endpoint will return an error
+# Default: 120 seconds (2 minutes)
+receipt_timeout_seconds = 120
