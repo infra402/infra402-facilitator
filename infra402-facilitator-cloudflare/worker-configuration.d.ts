@@ -8,32 +8,6 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		MY_CONTAINER: DurableObjectNamespace<import("./src/index").MyContainer>;
-		// Environment variables for infra402-facilitator
-		PORT?: string;
-		HOST?: string;
-		RUST_LOG?: string;
-		SIGNER_TYPE?: string;
-		EVM_PRIVATE_KEY?: string;
-		SOLANA_PRIVATE_KEY?: string;
-		RPC_URL_BASE_SEPOLIA?: string;
-		RPC_URL_BASE?: string;
-		RPC_URL_XDC?: string;
-		RPC_URL_AVALANCHE_FUJI?: string;
-		RPC_URL_AVALANCHE?: string;
-		RPC_URL_POLYGON_AMOY?: string;
-		RPC_URL_POLYGON?: string;
-		RPC_URL_SEI?: string;
-		RPC_URL_SEI_TESTNET?: string;
-		RPC_URL_BSC_TESTNET?: string;
-		RPC_URL_BSC?: string;
-		SOLANA_RPC_URL_MAINNET?: string;
-		SOLANA_RPC_URL_DEVNET?: string;
-		API_KEYS?: string;
-		ADMIN_API_KEY?: string;
-		CONFIG_FILE?: string;
-		OTEL_EXPORTER_OTLP_ENDPOINT?: string;
-		OTEL_EXPORTER_OTLP_HEADERS?: string;
-		OTEL_EXPORTER_OTLP_PROTOCOL?: string;
 	}
 }
 interface Env extends Cloudflare.Env {}
