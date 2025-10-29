@@ -1,27 +1,33 @@
 import { Container, getContainer } from "@cloudflare/containers";
-import { env as workerEnv } from "cloudflare:workers"; // Worker vars & secrets
-
-// keep only defined keys (all values must be strings)
-const pickDefined = (o: Record<string, string | undefined>) =>
-  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
-
-// optional: enforce required vars early
-const must = (v: string | undefined, name: string) => {
-  if (v === undefined || v === "") throw new Error(`Missing ${name}`);
-  return v;
-};
 
 export class MyContainer extends Container {
   defaultPort = 8080;
   requiredPorts = [8080];             // ensures this port must be up
   sleepAfter = "10m";
 
-  envVars = pickDefined({
+  override onStart() {
+    console.log('Container successfully started');
+  }
+
+  override onStop() {
+    console.log('Container successfully shut down');
+  }
+
+  override onError(error: unknown) {
+    console.error('Container error:', error);
+  }
+}
+
+// Keep only defined keys (all values must be strings)
+const pickDefined = (o: Record<string, string | undefined>) =>
+  Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+
+// Build environment variables from Worker env (secrets + vars)
+function buildEnvVars(workerEnv: Env): Record<string, string> {
+  return pickDefined({
     PORT: workerEnv.PORT ?? "8080",
     HOST: workerEnv.HOST ?? "0.0.0.0",
     RUST_LOG: workerEnv.RUST_LOG ?? "info",
-
-    // optional vars: included only if set
     SIGNER_TYPE: workerEnv.SIGNER_TYPE,
     EVM_PRIVATE_KEY: workerEnv.EVM_PRIVATE_KEY,
     SOLANA_PRIVATE_KEY: workerEnv.SOLANA_PRIVATE_KEY,
@@ -45,24 +51,18 @@ export class MyContainer extends Container {
     OTEL_EXPORTER_OTLP_HEADERS: workerEnv.OTEL_EXPORTER_OTLP_HEADERS,
     OTEL_EXPORTER_OTLP_PROTOCOL: workerEnv.OTEL_EXPORTER_OTLP_PROTOCOL,
   });
-
-  override onStart() {
-    console.log('Container successfully started');
-  }
-
-  override onStop() {
-    console.log('Container successfully shut down');
-  }
-
-  override onError(error: unknown) {
-    console.log('Container error:', error);
-  }
 }
 
 export default {
   async fetch(req: Request, env: Env) {
     const c = getContainer(env.MY_CONTAINER, "singleton");
-    await c.startAndWaitForPorts();
+
+    await c.startAndWaitForPorts({
+      startOptions: {
+        envVars: buildEnvVars(env)
+      }
+    });
+
     return c.fetch(req);
   },
 };
