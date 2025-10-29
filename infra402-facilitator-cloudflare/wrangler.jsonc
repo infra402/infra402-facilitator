@@ -73,7 +73,7 @@
                 {
 	                "name": "infra402-facilitator-cloudflare-dev",
                     "class_name": "MyContainer",
-                    "image": "registry.cloudflare.com/117b2d0b5fb93cf7801dc117be461e4c/infra402-facilitator-cloudflare-mycontainer:79e984e5",
+                    "image": "registry.cloudflare.com/117b2d0b5fb93cf7801dc117be461e4c/infra402-facilitator-cloudflare-mycontainer:6b80b209",
                     "max_instances": 10
                 }
             ],
