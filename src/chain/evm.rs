@@ -378,7 +378,14 @@ impl EvmProvider {
 
         // Step 5: Call the trait's settle method with pre-selected facilitator address
         // Use task-local storage to pass the address to send_transaction()
-        PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await
+        let result = PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await;
+
+        // Step 6: Clean up the inflight request entry to prevent memory leak
+        // Remove regardless of success/failure - the signature has been processed
+        self.inflight_requests.remove(&sig_hash);
+        tracing::debug!(sig_hash = %hex::encode(sig_hash), "request entry removed from inflight tracking");
+
+        result
     }
 }
 
