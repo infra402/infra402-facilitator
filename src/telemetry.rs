@@ -282,7 +282,7 @@ impl Telemetry {
                 {
                     tracing_subscriber::registry()
                         .with(tracing_subscriber::filter::LevelFilter::INFO)
-                        .with(tracing_subscriber::fmt::layer().json())
+                        .with(tracing_subscriber::fmt::layer().json().flatten_event(true))
                         .with(MetricsLayer::new(meter_provider.clone()))
                         .with(OpenTelemetryLayer::new(tracer))
                         .init();
@@ -310,7 +310,7 @@ impl Telemetry {
                 {
                     tracing_subscriber::registry()
                         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "trace".into()))
-                        .with(tracing_subscriber::fmt::layer().json())
+                        .with(tracing_subscriber::fmt::layer().json().flatten_event(true))
                         .init();
                 }
 
