@@ -214,10 +214,44 @@ impl EvmProvider {
         }
         let signer_addresses = Arc::new(signer_addresses);
         let signer_cursor = Arc::new(AtomicUsize::new(0));
+
+        // Configure RPC client with custom HTTP timeouts to prevent indefinite hangs
+        let config = crate::config::FacilitatorConfig::from_env().ok();
+        let network_str = network.to_string();
+        let rpc_timeout = config
+            .as_ref()
+            .and_then(|c| c.transaction.chains.get(&network_str))
+            .map(|chain_config| chain_config.rpc_timeout())
+            .or_else(|| {
+                config
+                    .as_ref()
+                    .map(|c| Duration::from_secs(c.transaction.default_rpc_timeout_seconds))
+            })
+            .unwrap_or(Duration::from_secs(30));
+
+        tracing::debug!(
+            network=%network,
+            rpc_timeout_secs=rpc_timeout.as_secs(),
+            "Configuring RPC client with timeout"
+        );
+
+        // Parse RPC URL for HTTP client configuration
+        let url = rpc_url
+            .parse::<url::Url>()
+            .map_err(|e| format!("Invalid RPC URL {rpc_url}: {e}"))?;
+
+        // Build custom HTTP client with configured timeouts
+        let http_client = alloy::transports::http::reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10)) // Connection establishment timeout
+            .timeout(rpc_timeout) // Total request timeout
+            .pool_idle_timeout(Duration::from_secs(90)) // Keep-alive timeout
+            .pool_max_idle_per_host(10) // Connection pool size
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+        // Create RPC client with custom HTTP client
         let client = RpcClient::builder()
-            .connect(rpc_url)
-            .await
-            .map_err(|e| format!("Failed to connect to {network}: {e}"))?;
+            .http_with_client(http_client, url);
         let filler = InnerFiller::default();
         let inner = ProviderBuilder::default()
             .filler(filler)
@@ -332,12 +366,20 @@ impl MetaEvmProvider for EvmProvider {
             txr.set_gas_price(gas);
         }
 
-        // Read receipt timeout from config or use default of 120 seconds
-        let receipt_timeout_secs = crate::config::FacilitatorConfig::from_env()
-            .ok()
-            .map(|config| config.transaction.receipt_timeout_seconds)
-            .unwrap_or(120);
-        let receipt_timeout = Duration::from_secs(receipt_timeout_secs);
+        // Read receipt timeout from chain-specific config or use default of 120 seconds
+        let config = crate::config::FacilitatorConfig::from_env().ok();
+        let network_str = self.chain.network.to_string();
+        let receipt_timeout = config
+            .as_ref()
+            .and_then(|c| c.transaction.chains.get(&network_str))
+            .map(|chain_config| chain_config.receipt_timeout())
+            .unwrap_or(Duration::from_secs(120));
+
+        tracing::debug!(
+            network=%self.chain.network,
+            receipt_timeout_secs=receipt_timeout.as_secs(),
+            "Using receipt timeout for transaction"
+        );
 
         let pending_tx = self
             .inner
@@ -345,17 +387,21 @@ impl MetaEvmProvider for EvmProvider {
             .await
             .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
 
-        let receipt = tokio::time::timeout(
-            receipt_timeout,
-            pending_tx
-                .with_required_confirmations(tx.confirmations)
-                .get_receipt()
-        )
-        .await
-        .map_err(|_| FacilitatorLocalError::ContractCall(
-            format!("Transaction receipt timeout after {} seconds", receipt_timeout_secs)
-        ))?
-        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+        // Use tokio::select! for better cancellation semantics
+        let receipt_fut = pending_tx
+            .with_required_confirmations(tx.confirmations)
+            .get_receipt();
+
+        let receipt = tokio::select! {
+            result = receipt_fut => {
+                result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            }
+            _ = tokio::time::sleep(receipt_timeout) => {
+                return Err(FacilitatorLocalError::ContractCall(
+                    format!("Transaction receipt timeout after {} seconds", receipt_timeout.as_secs())
+                ));
+            }
+        };
 
         Ok(receipt)
     }
@@ -1352,11 +1398,18 @@ impl TryFrom<Vec<u8>> for StructuredSignature {
 ///
 /// # How it works
 ///
-/// - **First call for an address**: Fetches the nonce using `.pending()`, which includes
-///   transactions in the mempool, not just confirmed transactions.
+/// - **First call for an address**: Attempts to fetch the nonce using `.pending()`, which includes
+///   transactions in the mempool, not just confirmed transactions. If the RPC provider doesn't
+///   support the `pending` block tag (e.g., BSC), gracefully falls back to `.latest()`.
 /// - **Subsequent calls**: Increments the cached nonce locally without querying the RPC.
 /// - **Per-address tracking**: Each address has its own cached nonce, allowing concurrent
 ///   transaction submission from multiple addresses.
+///
+/// # RPC Compatibility
+///
+/// Some RPC providers (notably BSC) do not support the `pending` block tag. For these providers,
+/// the fallback to `.latest()` means there is a small risk of "nonce too low" errors if the
+/// application restarts while transactions are still pending in the mempool.
 ///
 /// # Thread Safety
 ///
@@ -1398,7 +1451,13 @@ impl NonceManager for PendingNonceManager {
         let new_nonce = if *nonce == NONE {
             // Initialize the nonce if we haven't seen this account before.
             tracing::trace!(%address, "fetching nonce");
-            provider.get_transaction_count(address).pending().await?
+            match provider.get_transaction_count(address).pending().await {
+                Ok(nonce) => nonce,
+                Err(_) => {
+                    tracing::debug!(%address, "pending block tag not supported, using latest");
+                    provider.get_transaction_count(address).latest().await?
+                }
+            }
         } else {
             tracing::trace!(%address, current_nonce = *nonce, "incrementing nonce");
             *nonce + 1

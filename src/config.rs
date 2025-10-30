@@ -9,6 +9,7 @@ use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 /// Complete facilitator configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -166,20 +167,52 @@ impl Default for SecurityConfig {
     }
 }
 
+/// Chain-specific configuration for transaction timeouts and block times.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChainConfig {
+    /// Average block time for this chain in seconds.
+    pub block_time_seconds: u64,
+    /// Number of blocks to wait when polling for transaction receipt.
+    /// Receipt timeout = block_time_seconds * receipt_timeout_blocks.
+    pub receipt_timeout_blocks: u64,
+    /// Timeout for individual RPC requests in seconds.
+    pub rpc_request_timeout_seconds: u64,
+}
+
+impl ChainConfig {
+    /// Get the total receipt timeout duration.
+    pub fn receipt_timeout(&self) -> Duration {
+        Duration::from_secs(self.block_time_seconds * self.receipt_timeout_blocks)
+    }
+
+    /// Get the RPC request timeout duration.
+    pub fn rpc_timeout(&self) -> Duration {
+        Duration::from_secs(self.rpc_request_timeout_seconds)
+    }
+}
+
 /// Transaction-related configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct TransactionConfig {
-    /// Maximum time to wait for transaction receipt after submitting settlement transaction.
-    /// If receipt is not found within this timeout, the /settle endpoint will return an error.
-    /// Default: 120 seconds (2 minutes).
-    pub receipt_timeout_seconds: u64,
+    /// Default RPC request timeout in seconds.
+    /// This is used as a fallback when chain-specific configuration is not provided.
+    /// Default: 30 seconds.
+    pub default_rpc_timeout_seconds: u64,
+
+    /// Per-chain configuration overrides.
+    /// Key is the network name (e.g., "bsc", "ethereum", "base").
+    /// Each chain should specify its block_time_seconds, receipt_timeout_blocks, and rpc_request_timeout_seconds.
+    /// If a chain is not configured, sensible defaults will be used (120s receipt timeout, 30s RPC timeout).
+    #[serde(default)]
+    pub chains: HashMap<String, ChainConfig>,
 }
 
 impl Default for TransactionConfig {
     fn default() -> Self {
         Self {
-            receipt_timeout_seconds: 120, // 2 minutes
+            default_rpc_timeout_seconds: 30, // 30 seconds
+            chains: HashMap::new(),
         }
     }
 }

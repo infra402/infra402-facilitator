@@ -98,7 +98,47 @@ cleanup_interval_seconds = 3600
 # Transaction Configuration
 # ================================
 [transaction]
-# Maximum time to wait for transaction receipt after submitting settlement transaction
-# If receipt is not found within this timeout, the /settle endpoint will return an error
-# Default: 120 seconds (2 minutes)
-receipt_timeout_seconds = 120
+# Default RPC request timeout in seconds
+# This is used as a fallback when chain-specific configuration is not provided
+# Default: 30 seconds
+default_rpc_timeout_seconds = 30
+
+# Chain-specific configurations
+# Format: [transaction.chains.<network-name>]
+# Network name should match the chain ID mapping in src/chain/evm.rs
+
+# BSC (BNB Smart Chain) - Chain ID 56
+[transaction.chains.bsc]
+block_time_seconds = 3
+receipt_timeout_blocks = 20  # 60 seconds total (20 blocks * 3s)
+rpc_request_timeout_seconds = 15  # BSC RPCs can be slow/flaky
+
+# BSC Testnet - Chain ID 97
+[transaction.chains.bsc-testnet]
+block_time_seconds = 3
+receipt_timeout_blocks = 20  # 60 seconds total
+rpc_request_timeout_seconds = 15
+
+# Base - Chain ID 8453
+[transaction.chains.base]
+block_time_seconds = 2
+receipt_timeout_blocks = 30  # 60 seconds total (30 blocks * 2s)
+rpc_request_timeout_seconds = 20
+
+# Ethereum Mainnet - Chain ID 1
+[transaction.chains.ethereum]
+block_time_seconds = 12
+receipt_timeout_blocks = 10  # 120 seconds total (10 blocks * 12s)
+rpc_request_timeout_seconds = 30
+
+# Polygon - Chain ID 137
+[transaction.chains.polygon]
+block_time_seconds = 2
+receipt_timeout_blocks = 30  # 60 seconds total
+rpc_request_timeout_seconds = 20
+
+# Avalanche C-Chain - Chain ID 43114
+[transaction.chains.avalanche]
+block_time_seconds = 2
+receipt_timeout_blocks = 30  # 60 seconds total
+rpc_request_timeout_seconds = 20

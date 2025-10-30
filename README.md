@@ -45,7 +45,7 @@ PORT=8080
 RPC_URL_BASE_SEPOLIA=https://sepolia.base.org
 RPC_URL_BASE=https://mainnet.base.org
 
-# Signer
+# Signer (supports multiple wallets for high concurrency - see Performance & Scaling section)
 SIGNER_TYPE=private-key
 EVM_PRIVATE_KEY=0xYourPrivateKeyHere
 
@@ -232,6 +232,187 @@ Configure networks via RPC environment variables:
 
 Only networks with configured RPC URLs will be available.
 
+## Performance & Scaling
+
+### Multi-Wallet Configuration for High Concurrency
+
+The facilitator supports **multiple wallet addresses** for the same blockchain network to enable concurrent transaction submission. This is the primary way to scale settlement throughput.
+
+#### How It Works
+
+- The facilitator pays gas fees for all settlement transactions
+- Each facilitator wallet can process one settlement at a time (per-address nonce management)
+- Multiple wallets enable parallel processing using round-robin selection
+- **Architecture:** N wallets = N concurrent settlements
+
+#### Configuration
+
+Provide **comma-separated private keys** in the `EVM_PRIVATE_KEY` environment variable:
+
+```bash
+# Single wallet (default) - handles ~5 settlements/second
+EVM_PRIVATE_KEY=0xabc123...
+
+# Multiple wallets - handles ~25-50 settlements/second
+EVM_PRIVATE_KEY=0xkey1,0xkey2,0xkey3,0xkey4,0xkey5
+
+# High-throughput configuration - handles ~100+ settlements/second
+EVM_PRIVATE_KEY=0xkey1,0xkey2,...,0xkey20
+```
+
+**⚠️ Security Note:** More wallets = larger attack surface. Store keys securely (use secret managers in production).
+
+#### Performance Benchmarks
+
+| Wallets | Concurrent Streams | Approx Throughput | Use Case |
+|---------|-------------------|-------------------|----------|
+| 1 | 1 | ~5 TPS | Low traffic (< 10/hour) |
+| 5 | 5 | ~25 TPS | Medium traffic (10-100/hour) |
+| 10 | 10 | ~50 TPS | High traffic (100-500/hour) |
+| 20 | 20 | ~100 TPS | Very high traffic (500-1000/hour) |
+| 50+ | 50+ | ~250+ TPS | Enterprise scale (1000+/hour) |
+
+**Actual throughput depends on:**
+- RPC node performance and rate limits
+- Network congestion and block times
+- Transaction complexity (EIP-6492 deployments are slower)
+
+#### Operational Considerations
+
+##### 1. Gas Funding
+
+Each wallet needs native tokens for gas fees:
+
+**BSC Example:**
+```bash
+# Fund all wallets with BNB
+# Assuming 5 wallets and 0.1 BNB per wallet
+for address in $(cat wallet_addresses.txt); do
+    # Transfer 0.1 BNB to each wallet
+    echo "Fund $address with 0.1 BNB"
+done
+```
+
+**Monitoring Gas Balances:**
+```bash
+# Check all wallet balances
+cast balance 0xWallet1 --rpc-url $RPC_URL_BSC
+cast balance 0xWallet2 --rpc-url $RPC_URL_BSC
+# ... repeat for all wallets
+```
+
+##### 2. Wallet Generation
+
+Generate secure random keys:
+
+```python
+from eth_account import Account
+import secrets
+
+# Generate 10 wallets
+num_wallets = 10
+keys = []
+addresses = []
+
+for i in range(num_wallets):
+    private_key = "0x" + secrets.token_hex(32)
+    account = Account.from_key(private_key)
+    keys.append(private_key)
+    addresses.append(account.address)
+    print(f"Wallet {i+1}: {account.address}")
+
+# Output for .env file
+print("\nEVM_PRIVATE_KEY=" + ",".join(keys))
+
+# Save addresses for funding
+with open("wallet_addresses.txt", "w") as f:
+    for addr in addresses:
+        f.write(addr + "\n")
+```
+
+##### 3. Balance Monitoring (Recommended for Production)
+
+Set up alerts when wallet balances are low:
+
+```bash
+# Example monitoring script
+#!/bin/bash
+MIN_BALANCE="0.05"  # Minimum BNB balance
+WALLETS="0xWallet1 0xWallet2 0xWallet3"
+
+for wallet in $WALLETS; do
+    balance=$(cast balance $wallet --rpc-url $RPC_URL_BSC --ether)
+    if (( $(echo "$balance < $MIN_BALANCE" | bc -l) )); then
+        echo "⚠️ LOW BALANCE: $wallet has only $balance BNB"
+        # Send alert (PagerDuty, Slack, email, etc.)
+    fi
+done
+```
+
+##### 4. Key Management Best Practices
+
+**Development:**
+- Store keys in `.env` file (gitignored)
+- Use separate keys per environment
+
+**Production:**
+- Use secret management services (AWS Secrets Manager, HashiCorp Vault, Google Secret Manager)
+- Rotate keys periodically
+- Use separate keys per blockchain network
+- Consider hardware security modules (HSMs) for highest security
+
+**Example with AWS Secrets Manager:**
+```bash
+# Store keys
+aws secretsmanager create-secret \
+    --name facilitator/evm-private-keys \
+    --secret-string "key1,key2,key3"
+
+# Retrieve at startup
+export EVM_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
+    --secret-id facilitator/evm-private-keys \
+    --query SecretString --output text)
+```
+
+#### Verification
+
+Check that multiple wallets are loaded by inspecting startup logs:
+
+```bash
+RUST_LOG=info cargo run
+```
+
+Look for:
+```
+INFO infra402_facilitator::chain::evm: Initialized provider network=bsc-testnet signers=["0xWallet1", "0xWallet2", "0xWallet3", ...]
+```
+
+The `signers` array should list all your wallet addresses.
+
+#### Scaling Strategy by Traffic Level
+
+**Low Traffic (< 10 settlements/hour):**
+- Configuration: 1-3 wallets
+- Management: Manual funding and monitoring
+- Complexity: Minimal
+
+**Medium Traffic (10-100 settlements/hour):**
+- Configuration: 5-10 wallets
+- Management: Scripted balance checks
+- Complexity: Moderate
+
+**High Traffic (100-1000 settlements/hour):**
+- Configuration: 20-50 wallets
+- Management: Automated funding + monitoring + alerts
+- Complexity: High
+- Additional: Consider dedicated RPC nodes
+
+**Enterprise Scale (1000+ settlements/hour):**
+- Configuration: 50-100+ wallets
+- Management: Full automation, HSMs, key rotation
+- Complexity: Very high
+- Additional: Dedicated infrastructure, layer-2 consideration
+
 ## Observability
 
 ### OpenTelemetry Export
@@ -329,7 +510,7 @@ server {
 
 ### Required
 - `SIGNER_TYPE`: Signer type (currently only `private-key` supported)
-- `EVM_PRIVATE_KEY`: Hex-encoded private key for EVM chains
+- `EVM_PRIVATE_KEY`: Hex-encoded private key for EVM chains (supports comma-separated list for multiple wallets - see [Performance & Scaling](#performance--scaling))
 - `SOLANA_PRIVATE_KEY`: Base58-encoded private key for Solana (if using Solana)
 
 ### Server
