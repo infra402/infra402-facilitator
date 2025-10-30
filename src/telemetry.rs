@@ -261,19 +261,32 @@ impl Telemetry {
                 let tracer = tracer_provider.tracer("tracing-otel-subscriber");
 
                 // Register tracing subscriber with OpenTelemetry layers
-                tracing_subscriber::registry()
-                    // The global level filter prevents the exporter network stack
-                    // from reentering the globally installed OpenTelemetryLayer with
-                    // its own spans while exporting, as the libraries should not use
-                    // tracing levels below DEBUG. If the OpenTelemetry layer needs to
-                    // trace spans and events with higher verbosity levels, consider using
-                    // per-layer filtering to target the telemetry layer specifically,
-                    // e.g. by target matching.
-                    .with(tracing_subscriber::filter::LevelFilter::INFO)
-                    .with(tracing_subscriber::fmt::layer())
-                    .with(MetricsLayer::new(meter_provider.clone()))
-                    .with(OpenTelemetryLayer::new(tracer))
-                    .init();
+                // Use pretty console format for debug builds, JSON for release builds
+                #[cfg(debug_assertions)]
+                {
+                    tracing_subscriber::registry()
+                        // The global level filter prevents the exporter network stack
+                        // from reentering the globally installed OpenTelemetryLayer with
+                        // its own spans while exporting, as the libraries should not use
+                        // tracing levels below DEBUG. If the OpenTelemetry layer needs to
+                        // trace spans and events with higher verbosity levels, consider using
+                        // per-layer filtering to target the telemetry layer specifically,
+                        // e.g. by target matching.
+                        .with(tracing_subscriber::filter::LevelFilter::INFO)
+                        .with(tracing_subscriber::fmt::layer().pretty())
+                        .with(MetricsLayer::new(meter_provider.clone()))
+                        .with(OpenTelemetryLayer::new(tracer))
+                        .init();
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    tracing_subscriber::registry()
+                        .with(tracing_subscriber::filter::LevelFilter::INFO)
+                        .with(tracing_subscriber::fmt::layer().json())
+                        .with(MetricsLayer::new(meter_provider.clone()))
+                        .with(OpenTelemetryLayer::new(tracer))
+                        .init();
+                }
 
                 tracing::info!(
                     "OpenTelemetry tracing and metrics exporter is enabled via {:?}",
@@ -286,10 +299,20 @@ impl Telemetry {
             }
             None => {
                 // Fallback: just use local logging
-                tracing_subscriber::registry()
-                    .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "trace".into()))
-                    .with(tracing_subscriber::fmt::layer())
-                    .init();
+                #[cfg(debug_assertions)]
+                {
+                    tracing_subscriber::registry()
+                        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "trace".into()))
+                        .with(tracing_subscriber::fmt::layer().pretty())
+                        .init();
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    tracing_subscriber::registry()
+                        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "trace".into()))
+                        .with(tracing_subscriber::fmt::layer().json())
+                        .init();
+                }
 
                 tracing::info!("OpenTelemetry is not enabled");
 
