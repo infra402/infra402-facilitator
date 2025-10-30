@@ -943,7 +943,11 @@ pub struct TransferWithAuthorization0Call<P> {
 /// with code -32603 and message "Unsupported pending tag".
 fn is_unsupported_pending_error<E: std::fmt::Debug>(error: &E) -> bool {
     let error_str = format!("{:?}", error);
-    error_str.contains("Unsupported pending") || error_str.contains("unsupported pending")
+    let has_error = error_str.contains("Unsupported pending") || error_str.contains("unsupported pending");
+    if has_error {
+        tracing::warn!("Detected unsupported pending block tag error: {}", error_str);
+    }
+    has_error
 }
 
 /// Helper function to call a contract method with automatic fallback to "latest" block tag
@@ -958,12 +962,27 @@ where
     E: std::fmt::Debug,
 {
     match try_call.await {
-        Ok(result) => Ok(result),
-        Err(e) if is_unsupported_pending_error(&e) => {
-            tracing::debug!("pending block tag not supported, retrying with latest");
-            retry_call.await
+        Ok(result) => {
+            tracing::trace!("Contract call succeeded on first attempt");
+            Ok(result)
         }
-        Err(e) => Err(e),
+        Err(e) if is_unsupported_pending_error(&e) => {
+            tracing::warn!("Pending block tag not supported, retrying with latest block");
+            match retry_call.await {
+                Ok(result) => {
+                    tracing::info!("Contract call succeeded after fallback to latest block");
+                    Ok(result)
+                }
+                Err(retry_err) => {
+                    tracing::error!("Contract call failed even after fallback: {:?}", retry_err);
+                    Err(retry_err)
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Contract call failed with non-pending error: {:?}", e);
+            Err(e)
+        }
     }
 }
 
@@ -1110,7 +1129,7 @@ async fn is_contract_deployed<P: Provider>(
     provider: P,
     address: &Address,
 ) -> Result<bool, FacilitatorLocalError> {
-    let bytes = provider
+    let bytes = match provider
         .get_code_at(*address)
         .into_future()
         .instrument(tracing::info_span!("get_code_at",
@@ -1118,7 +1137,23 @@ async fn is_contract_deployed<P: Provider>(
             otel.kind = "client",
         ))
         .await
-        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+    {
+        Ok(code) => code,
+        Err(e) if is_unsupported_pending_error(&e) => {
+            tracing::debug!(%address, "pending block tag not supported for get_code_at, retrying with latest");
+            provider
+                .get_code_at(*address)
+                .block_id(BlockId::Number(BlockNumberOrTag::Latest))
+                .into_future()
+                .instrument(tracing::info_span!("get_code_at",
+                    address = %address,
+                    otel.kind = "client",
+                ))
+                .await
+                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+        }
+        Err(e) => return Err(FacilitatorLocalError::ContractCall(format!("{e:?}"))),
+    };
     Ok(!bytes.is_empty())
 }
 
