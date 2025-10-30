@@ -30,7 +30,7 @@ use alloy::providers::{
     Identity, MULTICALL3_ADDRESS, MulticallItem, Provider, RootProvider, WalletProvider,
 };
 use alloy::rpc::client::RpcClient;
-use alloy::rpc::types::{TransactionReceipt, TransactionRequest};
+use alloy::rpc::types::{BlockId, BlockNumberOrTag, TransactionReceipt, TransactionRequest};
 use alloy::sol_types::{Eip712Domain, SolCall, SolStruct, eip712_domain};
 use alloy::{hex, sol};
 use async_trait::async_trait;
@@ -494,25 +494,45 @@ where
                 // Execute both calls in a single transaction simulation to accommodate for possible smart wallet creation
                 match transfer_call.tx {
                     TransferWithAuthorizationCallBuilder::Usdc(tx) => {
-                        let (is_valid_signature_result, transfer_result) = self
-                            .inner()
-                            .multicall()
-                            .add(is_valid_signature_call)
-                            .add(tx)
-                            .aggregate3()
-                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                                    from = %transfer_call.from,
-                                    to = %transfer_call.to,
-                                    value = %transfer_call.value,
-                                    valid_after = %transfer_call.valid_after,
-                                    valid_before = %transfer_call.valid_before,
-                                    nonce = %transfer_call.nonce,
-                                    signature = %transfer_call.signature,
-                                    token_contract = %transfer_call.contract_address,
-                                    otel.kind = "client",
-                            ))
-                            .await
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        let (is_valid_signature_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(is_valid_signature_call.clone())
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            self
+                                .inner()
+                                .multicall()
+                                .add(is_valid_signature_call)
+                                .add(tx)
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .aggregate3()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                         let is_valid_signature_result = is_valid_signature_result
                             .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                         if !is_valid_signature_result {
@@ -524,25 +544,45 @@ where
                         transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
                     }
                     TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
-                        let (is_valid_signature_result, transfer_result) = self
-                            .inner()
-                            .multicall()
-                            .add(is_valid_signature_call)
-                            .add(tx)
-                            .aggregate3()
-                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                                    from = %transfer_call.from,
-                                    to = %transfer_call.to,
-                                    value = %transfer_call.value,
-                                    valid_after = %transfer_call.valid_after,
-                                    valid_before = %transfer_call.valid_before,
-                                    nonce = %transfer_call.nonce,
-                                    signature = %transfer_call.signature,
-                                    token_contract = %transfer_call.contract_address,
-                                    otel.kind = "client",
-                            ))
-                            .await
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        let (is_valid_signature_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(is_valid_signature_call.clone())
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            self
+                                .inner()
+                                .multicall()
+                                .add(is_valid_signature_call)
+                                .add(tx)
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .aggregate3()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                         let is_valid_signature_result = is_valid_signature_result
                             .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                         if !is_valid_signature_result {
@@ -563,40 +603,74 @@ where
                     transferWithAuthorization_0(&contract, &payment, signature).await?;
                 match transfer_call.tx {
                     TransferWithAuthorizationCallBuilder::Usdc(tx) => {
-                        tx
-                            .call()
-                            .into_future()
-                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                                    from = %transfer_call.from,
-                                    to = %transfer_call.to,
-                                    value = %transfer_call.value,
-                                    valid_after = %transfer_call.valid_after,
-                                    valid_before = %transfer_call.valid_before,
-                                    nonce = %transfer_call.nonce,
-                                    signature = %transfer_call.signature,
-                                    token_contract = %transfer_call.contract_address,
-                                    otel.kind = "client",
-                            ))
-                            .await
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        call_with_fallback(
+                            tx.clone()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            tx
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                     }
                     TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
-                        tx
-                            .call()
-                            .into_future()
-                            .instrument(tracing::info_span!("call_transferWithAuthorization_0",
-                                    from = %transfer_call.from,
-                                    to = %transfer_call.to,
-                                    value = %transfer_call.value,
-                                    valid_after = %transfer_call.valid_after,
-                                    valid_before = %transfer_call.valid_before,
-                                    nonce = %transfer_call.nonce,
-                                    signature = %transfer_call.signature,
-                                    token_contract = %transfer_call.contract_address,
-                                    otel.kind = "client",
-                            ))
-                            .await
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        call_with_fallback(
+                            tx.clone()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            tx
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                     }
                 }
                 // Drop contract to release provider clone after call completes
@@ -863,6 +937,36 @@ pub struct TransferWithAuthorization0Call<P> {
     pub contract_address: alloy::primitives::Address,
 }
 
+/// Checks if a contract error is caused by the RPC not supporting the "pending" block tag.
+///
+/// Some networks (like BSC) don't support the "pending" block tag and return an error
+/// with code -32603 and message "Unsupported pending tag".
+fn is_unsupported_pending_error<E: std::fmt::Debug>(error: &E) -> bool {
+    let error_str = format!("{:?}", error);
+    error_str.contains("Unsupported pending") || error_str.contains("unsupported pending")
+}
+
+/// Helper function to call a contract method with automatic fallback to "latest" block tag
+/// if the RPC doesn't support "pending".
+///
+/// Takes async blocks that produce the call results.
+async fn call_with_fallback<T, E>(
+    try_call: impl std::future::Future<Output = Result<T, E>>,
+    retry_call: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    match try_call.await {
+        Ok(result) => Ok(result),
+        Err(e) if is_unsupported_pending_error(&e) => {
+            tracing::debug!("pending block tag not supported, retrying with latest");
+            retry_call.await
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Validates that the current time is within the `validAfter` and `validBefore` bounds.
 ///
 /// Adds a 6-second grace buffer when checking expiration to account for latency.
@@ -910,32 +1014,58 @@ async fn assert_enough_balance<P: Provider>(
 ) -> Result<(), FacilitatorLocalError> {
     let balance = match token_contract {
         Erc3009Contract::Usdc(usdc_contract) => {
-            usdc_contract
-                .balanceOf(sender.0)
-                .call()
-                .into_future()
-                .instrument(tracing::info_span!(
-                    "fetch_token_balance",
-                    token_contract = %usdc_contract.address(),
-                    sender = %sender,
-                    otel.kind = "client"
-                ))
-                .await
-                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            call_with_fallback(
+                usdc_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %usdc_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                usdc_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %usdc_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
         }
         Erc3009Contract::Xbnb(xbnb_contract) => {
-            xbnb_contract
-                .balanceOf(sender.0)
-                .call()
-                .into_future()
-                .instrument(tracing::info_span!(
-                    "fetch_token_balance",
-                    token_contract = %xbnb_contract.address(),
-                    sender = %sender,
-                    otel.kind = "client"
-                ))
-                .await
-                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            call_with_fallback(
+                xbnb_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %xbnb_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                xbnb_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %xbnb_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
         }
     };
 
@@ -1034,28 +1164,50 @@ async fn assert_domain<P: Provider>(
         // Call .version() on USDC or .eip712Domain().version on XBNB
         match token_contract {
             Erc3009Contract::Usdc(usdc_contract) => {
-                usdc_contract
-                    .version()
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_eip712_version",
-                        otel.kind = "client",
-                    ))
-                    .await
-                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+                call_with_fallback(
+                    usdc_contract
+                        .version()
+                        .call()
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_eip712_version",
+                            otel.kind = "client",
+                        )),
+                    usdc_contract
+                        .version()
+                        .call()
+                        .block(BlockId::Number(BlockNumberOrTag::Latest))
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_eip712_version",
+                            otel.kind = "client",
+                        )),
+                )
+                .await
+                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
             }
             Erc3009Contract::Xbnb(xbnb_contract) => {
-                let domain = xbnb_contract
-                    .eip712Domain()
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_eip712_domain",
-                        otel.kind = "client",
-                    ))
-                    .await
-                    .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                let domain = call_with_fallback(
+                    xbnb_contract
+                        .eip712Domain()
+                        .call()
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_eip712_domain",
+                            otel.kind = "client",
+                        )),
+                    xbnb_contract
+                        .eip712Domain()
+                        .call()
+                        .block(BlockId::Number(BlockNumberOrTag::Latest))
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_eip712_domain",
+                            otel.kind = "client",
+                        )),
+                )
+                .await
+                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
                 domain.version // version field from the eip712Domain response
             }
         }

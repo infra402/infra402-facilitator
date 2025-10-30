@@ -65,4 +65,33 @@ export default {
 
     return c.fetch(req);
   },
+
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log('Running scheduled keep-alive ping at', new Date(controller.scheduledTime));
+
+    try {
+      const c = getContainer(env.MY_CONTAINER, "singleton");
+
+      // Start container if not running
+      await c.startAndWaitForPorts({
+        startOptions: {
+          envVars: buildEnvVars(env)
+        }
+      });
+
+      // Ping the health endpoint to keep container alive
+      const healthCheck = await c.fetch(new Request('http://container/health', {
+        method: 'GET'
+      }));
+
+      if (healthCheck.ok) {
+        console.log('Keep-alive ping successful');
+      } else {
+        console.warn('Keep-alive ping returned non-OK status:', healthCheck.status);
+      }
+    } catch (error) {
+      console.error('Keep-alive ping failed:', error);
+      // Don't throw - we don't want cron to fail
+    }
+  },
 };
