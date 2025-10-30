@@ -205,9 +205,6 @@ pub struct EvmProvider {
     /// Per-address settlement locks to ensure FIFO ordering and prevent nonce race conditions.
     /// Each facilitator address has its own mutex to serialize settlements.
     settlement_locks: Arc<DashMap<Address, Arc<Mutex<()>>>>,
-    /// In-flight request tracking by signature hash to prevent duplicate submissions.
-    /// Maps signature hash to a lock, ensuring only one request per signature is processed at a time.
-    inflight_requests: Arc<DashMap<[u8; 32], Arc<Mutex<()>>>>,
 }
 
 impl EvmProvider {
@@ -279,7 +276,6 @@ impl EvmProvider {
             signer_addresses,
             signer_cursor,
             settlement_locks: Arc::new(DashMap::new()),
-            inflight_requests: Arc::new(DashMap::new()),
         })
     }
 
@@ -305,87 +301,35 @@ impl EvmProvider {
         Arc::clone(entry.value())
     }
 
-    /// Get the request lock Arc for a specific signature hash.
-    /// Caller can try_lock() to check for duplicates.
-    fn get_request_lock(&self, sig_hash: [u8; 32]) -> Arc<Mutex<()>> {
-        let entry = self
-            .inflight_requests
-            .entry(sig_hash)
-            .or_insert_with(|| Arc::new(Mutex::new(())));
-        Arc::clone(entry.value())
-    }
-
     /// Settle with proper locking to prevent nonce race conditions.
     ///
-    /// This method wraps the trait's settle() implementation with:
-    /// 1. Request deduplication (prevents duplicate signatures)
-    /// 2. Per-address settlement serialization (ensures FIFO nonce ordering)
+    /// This method wraps the trait's settle() implementation with per-address
+    /// settlement serialization to ensure FIFO nonce ordering. The lock is
+    /// acquired BEFORE validation to ensure proper ordering based on arrival
+    /// time, not validation completion time.
     ///
-    /// The locks are acquired BEFORE validation to ensure proper ordering based on arrival time,
-    /// not validation completion time.
+    /// Note: This does NOT prevent duplicate ERC-3009 signatures - that is the
+    /// smart contract's responsibility. The facilitator only ensures correct
+    /// blockchain-level nonce ordering.
     pub async fn settle_with_lock(&self, request: &SettleRequest) -> Result<SettleResponse, FacilitatorLocalError> {
-        // Step 1: Extract signature for deduplication
-        let sig_bytes = match &request.payment_payload.payload {
-            crate::types::ExactPaymentPayload::Evm(evm_payload) => evm_payload.signature.0.as_slice(),
-            crate::types::ExactPaymentPayload::Solana(_) => {
-                // Solana uses different signature format, skip deduplication for now
-                return Facilitator::settle(self, request).await;
-            }
-        };
-        let sig_hash: [u8; 32] = alloy::primitives::keccak256(sig_bytes).into();
-
-        // Step 2: Check for duplicate in-flight requests
-        let request_lock = self.get_request_lock(sig_hash);
-        let _request_guard = match request_lock.try_lock() {
-            Ok(guard) => {
-                tracing::debug!(sig_hash = %hex::encode(sig_hash), "request lock acquired");
-                guard
-            }
-            Err(_) => {
-                // Request with same signature is already being processed
-                tracing::warn!(
-                    sig_hash = %hex::encode(sig_hash),
-                    "rejecting duplicate settlement request"
-                );
-                let payer_address = match &request.payment_payload.payload {
-                    crate::types::ExactPaymentPayload::Evm(evm_payload) => {
-                        crate::types::MixedAddress::from(evm_payload.authorization.from)
-                    }
-                    _ => unreachable!(),
-                };
-                return Err(FacilitatorLocalError::InvalidSignature(
-                    payer_address,
-                    "duplicate request already in flight".into()
-                ));
-            }
-        };
-
-        // Step 3: Select facilitator address early to acquire settlement lock BEFORE validation
+        // Step 1: Select facilitator address early to acquire settlement lock BEFORE validation
         // This ensures FIFO ordering - earlier requests lock first regardless of validation timing
         let facilitator_address = self.next_signer_address();
         tracing::info!(
             %facilitator_address,
-            sig_hash = %hex::encode(&sig_hash[..8]),
             "processing settlement request"
         );
 
-        // Step 4: Acquire settlement lock to serialize transactions from this facilitator address
+        // Step 2: Acquire settlement lock to serialize transactions from this facilitator address
         // This prevents nonce race conditions by ensuring sequential processing per address
         let settlement_lock = self.get_settlement_lock(facilitator_address);
         tracing::debug!(%facilitator_address, "acquiring settlement lock");
         let _settlement_guard = settlement_lock.lock().await;
         tracing::debug!(%facilitator_address, "settlement lock acquired");
 
-        // Step 5: Call the trait's settle method with pre-selected facilitator address
+        // Step 3: Call the trait's settle method with pre-selected facilitator address
         // Use task-local storage to pass the address to send_transaction()
-        let result = PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await;
-
-        // Step 6: Clean up the inflight request entry to prevent memory leak
-        // Remove regardless of success/failure - the signature has been processed
-        self.inflight_requests.remove(&sig_hash);
-        tracing::debug!(sig_hash = %hex::encode(sig_hash), "request entry removed from inflight tracking");
-
-        result
+        PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await
     }
 }
 
