@@ -16,6 +16,8 @@
 //! - [`telemetry`] — OpenTelemetry instrumentation setup for tracing and observability.
 //! - [`types`] — all shared x402 protocol structures and payload formats.
 
+pub mod batch_processor;
+pub mod batch_queue;
 pub mod chain;
 pub mod config;
 pub mod facilitator;

@@ -1,626 +1,365 @@
 # infra402-facilitator
 
-> Production-ready x402 facilitator with enterprise-grade security features, abuse detection, rate limiting, and multi-chain support.
+> Production-ready x402 payment facilitator with enterprise security, multi-chain support, and high-throughput batch settlement.
 
-A hardened x402 payment facilitator built on [x402-rs](https://github.com/x402-rs/x402-rs), enhanced with comprehensive security middleware for production deployments.
+A hardened [x402 protocol](https://x402.org) facilitator built on [x402-rs](https://github.com/x402-rs/x402-rs), featuring comprehensive security middleware, abuse detection, rate limiting, and Multicall3 batch settlement for production deployments.
 
 ## Features
 
-### Core x402 Protocol
-- **Payment Verification**: Cryptographic validation of x402 payment payloads
-- **Payment Settlement**: On-chain transaction submission and monitoring
-- **Multi-Chain Support**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
-- **Protocol Compliance**: Full x402 spec implementation with SDK compatibility
+### Core Protocol
+- ✅ **x402 Compliance**: Full protocol implementation with TypeScript/Go/Rust SDK compatibility
+- ✅ **Multi-Chain**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
+- ✅ **Payment Verification**: Cryptographic signature validation and balance checks
+- ✅ **Payment Settlement**: On-chain transaction submission and monitoring
 
-### Security Features
-- **Rate Limiting**: Token bucket algorithm with per-IP tracking and automatic bans
-- **Abuse Detection**: Tracks invalid signatures, malformed payloads, and suspicious patterns
-- **API Key Authentication**: Bearer token auth for `/verify` and `/settle` endpoints
-- **Admin Authentication**: Separate admin key for monitoring and statistics endpoints
-- **IP Filtering**: Allow/block lists with CIDR support
-- **Request Validation**: Size limits and malformed payload detection
-- **CORS Control**: Configurable origin restrictions
-
-### Operations & Observability
-- **OpenTelemetry**: Full tracing and metrics export (Honeycomb, Prometheus, Grafana)
-- **Security Logging**: Detailed audit trail of rate limits, auth failures, and abuse
-- **Admin Dashboard**: Real-time statistics via `/admin/stats` endpoint
-- **Background Cleanup**: Automatic memory management for tracking data
-- **Docker Ready**: Optimized multi-stage builds with minimal runtime dependencies
+### Security & Operations
+- 🔒 **Enterprise Security**: Rate limiting, API keys, IP filtering, abuse detection
+- 📊 **Observability**: OpenTelemetry tracing, structured logging, admin stats
+- ⚡ **High Performance**: Multi-wallet concurrency, Multicall3 batch settlement (100-150x throughput)
+- 🐳 **Cloud Native**: Docker, Kubernetes, systemd deployment options
 
 ## Quick Start
 
-### Run with Docker (TBA)
+### Installation
+
+```bash
+# Clone repository
+git clone https://github.com/your-org/infra402-facilitator.git
+cd infra402-facilitator
+
+# Build
+cargo build --release
+```
 
 ### Basic Configuration
 
-Create a `.env` file:
+Create `.env`:
 
 ```bash
 # Server
 HOST=0.0.0.0
 PORT=8080
 
-# Blockchain RPCs
-RPC_URL_BASE_SEPOLIA=https://sepolia.base.org
+# RPC Endpoints
 RPC_URL_BASE=https://mainnet.base.org
+RPC_URL_BSC=https://bsc-dataseed.binance.org
 
-# Signer (supports multiple wallets for high concurrency - see Performance & Scaling section)
+# Signer
 SIGNER_TYPE=private-key
 EVM_PRIVATE_KEY=0xYourPrivateKeyHere
 
 # Security (optional)
-API_KEYS=your-secret-api-key
-ADMIN_API_KEY=your-admin-key
-
-# Observability (optional)
-RUST_LOG=info
+API_KEYS=your-api-key-here
+ADMIN_API_KEY=your-admin-key-here
 ```
 
-Create a `config.toml` (copy from `config.toml.example`):
-
-```toml
-[rate_limiting]
-enabled = true
-requests_per_second = 10
-ban_duration_seconds = 300
-ban_threshold = 5
-
-[cors]
-allowed_origins = ["https://yourdomain.com"]
-
-[security]
-log_security_events = true
-cleanup_interval_seconds = 300
-```
-
-### Build Locally
+### Run
 
 ```bash
-cargo build --release
 ./target/release/infra402-facilitator
 ```
 
-## API Endpoints
+Verify it's running:
+```bash
+curl http://localhost:8080/health
+```
 
-### Public Endpoints
-- `GET /` - Service greeting
-- `GET /health` - Health check
-- `GET /supported` - List supported networks and payment schemes
+**→ [Complete Quick Start Guide](docs/QUICK_START.md)**
 
-### Payment Endpoints (API key required if `API_KEYS` set)
-- `POST /verify` - Verify payment payload cryptographic signatures
-- `POST /settle` - Submit verified payment to blockchain
+## Documentation
 
-### Admin Endpoints (admin key required)
-- `GET /admin/stats` - Security statistics (tracked IPs, suspicious activity)
+### Getting Started
+- **[Quick Start Guide](docs/QUICK_START.md)** - Get up and running in 5 minutes
+- **[API Reference](docs/API.md)** - Complete HTTP endpoint documentation
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Security, rate limiting, and operational settings
 
-### Example: Verify Payment
+### Network & Performance
+- **[Networks Guide](docs/NETWORKS.md)** - Supported blockchains and RPC configuration
+- **[Performance Guide](docs/PERFORMANCE.md)** - Multi-wallet scaling for high throughput
+- **[Batch Settlement Guide](docs/BATCH_SETTLEMENT.md)** - 100-150x throughput with Multicall3
+
+### Operations
+- **[Observability Guide](docs/OBSERVABILITY.md)** - Logging, tracing, and monitoring
+- **[Deployment Guide](docs/DEPLOYMENT.md)** - Docker, Kubernetes, production deployment
+- **[Security Documentation](docs/SECURITY.md)** - Security best practices and hardening
+
+### Development
+- **[Development Guide](docs/DEVELOPMENT.md)** - Contributing, testing, and development workflow
+- **[x402 Protocol Reference](docs/X402_PROTOCOL.md)** - Protocol specification and implementation details
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   HTTP Endpoints                      │
+│  GET /health  │  POST /verify  │  POST /settle       │
+└────────────┬─────────────────────────────────────────┘
+             │
+┌────────────▼─────────────────────────────────────────┐
+│              Security Middleware                      │
+│  Rate Limit │ IP Filter │ API Key │ Abuse Detection  │
+└────────────┬─────────────────────────────────────────┘
+             │
+┌────────────▼─────────────────────────────────────────┐
+│             Facilitator Core                          │
+│  Payment Verification │ Signature Validation          │
+└────────────┬─────────────────────────────────────────┘
+             │
+     ┌───────┴────────┐
+     │                │
+┌────▼──────┐  ┌──────▼────────────────────────────────┐
+│  Direct   │  │   Batch Settlement Queue Manager      │
+│ Settlement│  │  • Per-(facilitator, network) queues  │
+└────┬──────┘  │  • Multicall3 batching                │
+     │         │  • 100-150x throughput                 │
+     │         └──────┬────────────────────────────────┘
+     │                │
+┌────▼────────────────▼────────────────────────────────┐
+│           Multi-Wallet Round-Robin                    │
+│  Wallet 1 │ Wallet 2 │ ... │ Wallet N                │
+└────┬────────────────┬────────────────────────────────┘
+     │                │
+┌────▼────────────────▼────────────────────────────────┐
+│              Blockchain Networks                      │
+│  Base │ BSC │ Solana │ Avalanche │ Polygon │ ...     │
+└──────────────────────────────────────────────────────┘
+```
+
+## Use Cases
+
+### Low Traffic (< 10 settlements/hour)
+- Single wallet, public RPC endpoints
+- Basic security configuration
+- **Cost**: ~$0.50/settlement
+
+### Medium Traffic (10-100 settlements/hour)
+- 5-10 wallets, dedicated RPC provider
+- Rate limiting and monitoring
+- **Cost**: ~$0.50/settlement
+
+### High Traffic (100-1000 settlements/hour)
+- 20+ wallets, batch settlement enabled
+- Per-network configuration tuning
+- **Cost**: ~$0.12/settlement (75% savings)
+
+### Enterprise (1000+ settlements/hour)
+- 50+ wallets, aggressive batching
+- Multi-region deployment, HSMs
+- Full observability stack
+- **Cost**: ~$0.05/settlement (90% savings)
+
+**→ [Performance & Scaling Guide](docs/PERFORMANCE.md)**
+
+## Key Features
+
+### Batch Settlement
+
+Bundle multiple settlements into single Multicall3 transactions for massive throughput improvements:
+
+```toml
+[batch_settlement]
+enabled = true
+max_batch_size = 150
+max_wait_ms = 500
+
+# Per-network tuning
+[batch_settlement.networks.bsc]
+max_batch_size = 200
+max_wait_ms = 1000
+```
+
+**Benefits:**
+- **100-150x throughput** increase (1 nonce instead of 150)
+- **~75% gas cost reduction** (shared transaction overhead)
+- **Per-network configuration** (tune for each blockchain's characteristics)
+
+**→ [Batch Settlement Guide](docs/BATCH_SETTLEMENT.md)**
+
+### Multi-Wallet Concurrency
+
+Scale settlement throughput with multiple facilitator wallets:
 
 ```bash
-curl -X POST https://facilitator.example.com/verify \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "paymentPayload": {...},
-    "paymentRequirements": {...}
-  }'
+# 5 wallets = ~25 settlements/second
+EVM_PRIVATE_KEY=0xKey1,0xKey2,0xKey3,0xKey4,0xKey5
+
+# 50 wallets = ~250 settlements/second
+EVM_PRIVATE_KEY=0xKey1,...,0xKey50
 ```
 
-### Example: Admin Stats
+**→ [Performance Guide](docs/PERFORMANCE.md)**
 
-```bash
-curl https://facilitator.example.com/admin/stats \
-  -H "X-Admin-Key: your-admin-key"
-```
+### Enterprise Security
 
-Response:
-```json
-{
-  "total_ips_tracked": 42,
-  "suspicious_ips": 3
-}
-```
-
-## Security Configuration
-
-### API Key Authentication
-
-Protect `/verify` and `/settle` endpoints:
-
-```bash
-export API_KEYS="key1,key2,key3"
-```
-
-Clients must include:
-```
-Authorization: Bearer <key>
-```
-
-### Admin Authentication
-
-Protect admin endpoints:
-
-```bash
-export ADMIN_API_KEY="your-admin-secret"
-```
-
-Clients must include:
-```
-X-Admin-Key: <key>
-```
-
-### Rate Limiting
-
-Configure in `config.toml`:
+Comprehensive security middleware for production:
 
 ```toml
 [rate_limiting]
 enabled = true
-requests_per_second = 10          # Global limit per IP
-ban_duration_seconds = 300         # 5 minute ban after violations
-ban_threshold = 5                  # Violations before ban
+requests_per_second = 50
+ban_threshold = 5
 
-[rate_limiting.endpoints]
-verify = 5                         # Override for /verify
-settle = 2                         # Override for /settle
-```
-
-**Behavior:**
-- Exceeding rate limit returns `429 Too Many Requests`
-- After `ban_threshold` violations, IP is temporarily banned
-- Bans auto-expire after `ban_duration_seconds`
-
-### IP Filtering
-
-```toml
 [ip_filtering]
-allowed_ips = [
-    "192.168.1.0/24",    # Internal network
-    "10.0.0.1",          # Specific trusted IP
-]
+allowed_ips = ["192.168.1.0/24"]
+blocked_ips = ["192.0.2.0/24"]
 
-blocked_ips = [
-    "192.0.2.0/24",      # Known malicious range
-]
-```
-
-- Empty `allowed_ips` = allow all (default)
-- Blocked IPs always rejected, regardless of allow list
-- Supports IPv4, IPv6, and CIDR notation
-
-### CORS Control
-
-```toml
-[cors]
-allowed_origins = [
-    "https://app.example.com",
-    "https://dashboard.example.com",
-]
-```
-
-Empty list = allow all origins (`*`)
-
-### Request Limits
-
-```toml
-[request]
-max_body_size_bytes = 1048576  # 1 MB
-```
-
-Prevents large payload attacks.
-
-## Supported Networks
-
-Configure networks via RPC environment variables:
-
-| Network                | Environment Variable       | Status |
-|:-----------------------|:---------------------------|:------:|
-| Base Sepolia Testnet   | `RPC_URL_BASE_SEPOLIA`     | ✅      |
-| Base Mainnet           | `RPC_URL_BASE`             | ✅      |
-| BSC Testnet            | `RPC_URL_BSC_TESTNET`      | ✅      |
-| BSC Mainnet            | `RPC_URL_BSC`              | ✅      |
-| Solana Devnet          | `RPC_URL_SOLANA_DEVNET`    | ✅      |
-| Solana Mainnet         | `RPC_URL_SOLANA`           | ✅      |
-| Avalanche Fuji Testnet | `RPC_URL_AVALANCHE_FUJI`   | ✅      |
-| Avalanche C-Chain      | `RPC_URL_AVALANCHE`        | ✅      |
-| Polygon Amoy Testnet   | `RPC_URL_POLYGON_AMOY`     | ✅      |
-| Polygon Mainnet        | `RPC_URL_POLYGON`          | ✅      |
-| Sei Testnet            | `RPC_URL_SEI_TESTNET`      | ✅      |
-| Sei Mainnet            | `RPC_URL_SEI`              | ✅      |
-| XDC Mainnet            | `RPC_URL_XDC`              | ✅      |
-
-Only networks with configured RPC URLs will be available.
-
-## Performance & Scaling
-
-### Multi-Wallet Configuration for High Concurrency
-
-The facilitator supports **multiple wallet addresses** for the same blockchain network to enable concurrent transaction submission. This is the primary way to scale settlement throughput.
-
-#### How It Works
-
-- The facilitator pays gas fees for all settlement transactions
-- Each facilitator wallet can process one settlement at a time (per-address nonce management)
-- Multiple wallets enable parallel processing using round-robin selection
-- **Architecture:** N wallets = N concurrent settlements
-
-#### Configuration
-
-Provide **comma-separated private keys** in the `EVM_PRIVATE_KEY` environment variable:
-
-```bash
-# Single wallet (default) - handles ~5 settlements/second
-EVM_PRIVATE_KEY=0xabc123...
-
-# Multiple wallets - handles ~25-50 settlements/second
-EVM_PRIVATE_KEY=0xkey1,0xkey2,0xkey3,0xkey4,0xkey5
-
-# High-throughput configuration - handles ~100+ settlements/second
-EVM_PRIVATE_KEY=0xkey1,0xkey2,...,0xkey20
-```
-
-**⚠️ Security Note:** More wallets = larger attack surface. Store keys securely (use secret managers in production).
-
-#### Performance Benchmarks
-
-| Wallets | Concurrent Streams | Approx Throughput | Use Case |
-|---------|-------------------|-------------------|----------|
-| 1 | 1 | ~5 TPS | Low traffic (< 10/hour) |
-| 5 | 5 | ~25 TPS | Medium traffic (10-100/hour) |
-| 10 | 10 | ~50 TPS | High traffic (100-500/hour) |
-| 20 | 20 | ~100 TPS | Very high traffic (500-1000/hour) |
-| 50+ | 50+ | ~250+ TPS | Enterprise scale (1000+/hour) |
-
-**Actual throughput depends on:**
-- RPC node performance and rate limits
-- Network congestion and block times
-- Transaction complexity (EIP-6492 deployments are slower)
-
-#### Operational Considerations
-
-##### 1. Gas Funding
-
-Each wallet needs native tokens for gas fees:
-
-**BSC Example:**
-```bash
-# Fund all wallets with BNB
-# Assuming 5 wallets and 0.1 BNB per wallet
-for address in $(cat wallet_addresses.txt); do
-    # Transfer 0.1 BNB to each wallet
-    echo "Fund $address with 0.1 BNB"
-done
-```
-
-**Monitoring Gas Balances:**
-```bash
-# Check all wallet balances
-cast balance 0xWallet1 --rpc-url $RPC_URL_BSC
-cast balance 0xWallet2 --rpc-url $RPC_URL_BSC
-# ... repeat for all wallets
-```
-
-##### 2. Wallet Generation
-
-Generate secure random keys:
-
-```python
-from eth_account import Account
-import secrets
-
-# Generate 10 wallets
-num_wallets = 10
-keys = []
-addresses = []
-
-for i in range(num_wallets):
-    private_key = "0x" + secrets.token_hex(32)
-    account = Account.from_key(private_key)
-    keys.append(private_key)
-    addresses.append(account.address)
-    print(f"Wallet {i+1}: {account.address}")
-
-# Output for .env file
-print("\nEVM_PRIVATE_KEY=" + ",".join(keys))
-
-# Save addresses for funding
-with open("wallet_addresses.txt", "w") as f:
-    for addr in addresses:
-        f.write(addr + "\n")
-```
-
-##### 3. Balance Monitoring (Recommended for Production)
-
-Set up alerts when wallet balances are low:
-
-```bash
-# Example monitoring script
-#!/bin/bash
-MIN_BALANCE="0.05"  # Minimum BNB balance
-WALLETS="0xWallet1 0xWallet2 0xWallet3"
-
-for wallet in $WALLETS; do
-    balance=$(cast balance $wallet --rpc-url $RPC_URL_BSC --ether)
-    if (( $(echo "$balance < $MIN_BALANCE" | bc -l) )); then
-        echo "⚠️ LOW BALANCE: $wallet has only $balance BNB"
-        # Send alert (PagerDuty, Slack, email, etc.)
-    fi
-done
-```
-
-##### 4. Key Management Best Practices
-
-**Development:**
-- Store keys in `.env` file (gitignored)
-- Use separate keys per environment
-
-**Production:**
-- Use secret management services (AWS Secrets Manager, HashiCorp Vault, Google Secret Manager)
-- Rotate keys periodically
-- Use separate keys per blockchain network
-- Consider hardware security modules (HSMs) for highest security
-
-**Example with AWS Secrets Manager:**
-```bash
-# Store keys
-aws secretsmanager create-secret \
-    --name facilitator/evm-private-keys \
-    --secret-string "key1,key2,key3"
-
-# Retrieve at startup
-export EVM_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
-    --secret-id facilitator/evm-private-keys \
-    --query SecretString --output text)
-```
-
-#### Verification
-
-Check that multiple wallets are loaded by inspecting startup logs:
-
-```bash
-RUST_LOG=info cargo run
-```
-
-Look for:
-```
-INFO infra402_facilitator::chain::evm: Initialized provider network=bsc-testnet signers=["0xWallet1", "0xWallet2", "0xWallet3", ...]
-```
-
-The `signers` array should list all your wallet addresses.
-
-#### Scaling Strategy by Traffic Level
-
-**Low Traffic (< 10 settlements/hour):**
-- Configuration: 1-3 wallets
-- Management: Manual funding and monitoring
-- Complexity: Minimal
-
-**Medium Traffic (10-100 settlements/hour):**
-- Configuration: 5-10 wallets
-- Management: Scripted balance checks
-- Complexity: Moderate
-
-**High Traffic (100-1000 settlements/hour):**
-- Configuration: 20-50 wallets
-- Management: Automated funding + monitoring + alerts
-- Complexity: High
-- Additional: Consider dedicated RPC nodes
-
-**Enterprise Scale (1000+ settlements/hour):**
-- Configuration: 50-100+ wallets
-- Management: Full automation, HSMs, key rotation
-- Complexity: Very high
-- Additional: Dedicated infrastructure, layer-2 consideration
-
-## Observability
-
-### OpenTelemetry Export
-
-Configure via environment variables:
-
-```bash
-# Honeycomb example
-OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io:443
-OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY,x-honeycomb-dataset=infra402-facilitator
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-```
-
-Emits structured traces with:
-- HTTP method, status, URI
-- Latency measurements
-- Request/response metadata
-- Security events (rate limits, auth failures)
-
-### Security Event Logging
-
-Enable in `config.toml`:
-
-```toml
 [security]
 log_security_events = true
 ```
 
-Logs include:
-- Rate limit violations
-- Authentication failures
-- IP blocks/bans
-- Invalid signatures
-- Suspicious activity patterns
+**→ [Configuration Guide](docs/CONFIGURATION.md)**
 
-**Filter security logs:**
+## Supported Networks
+
+| Network           | Mainnet | Testnet            | Status |
+|:------------------|:--------|:-------------------|:------:|
+| Base              | ✅       | ✅ Base Sepolia     | ✅      |
+| BSC               | ✅       | ✅ BSC Testnet      | ✅      |
+| Solana            | ✅       | ✅ Solana Devnet    | ✅      |
+| Avalanche C-Chain | ✅       | ✅ Fuji Testnet     | ✅      |
+| Polygon           | ✅       | ✅ Amoy Testnet     | ✅      |
+| Sei               | ✅       | ✅ Sei Testnet      | ✅      |
+| XDC               | ✅       | -                  | ✅      |
+
+**→ [Networks Guide](docs/NETWORKS.md)**
+
+## API Endpoints
+
+### Public
+- `GET /` - Service information
+- `GET /health` - Health check with supported networks
+- `GET /supported` - List supported payment schemes
+
+### Payment (API key required)
+- `POST /verify` - Verify payment signature and balance
+- `POST /settle` - Submit payment to blockchain
+
+### Admin (admin key required)
+- `GET /admin/stats` - Security and queue statistics
+
+**→ [API Reference](docs/API.md)**
+
+## Monitoring
+
 ```bash
-RUST_LOG=info infra402-facilitator | grep -E "(banned|blocked|unauthorized|suspicious)"
+# Admin stats
+curl -H "X-Admin-Key: your-key" http://localhost:8080/admin/stats
 ```
+
+```json
+{
+  "abuse_detection": {
+    "total_ips_tracked": 142,
+    "suspicious_ips": 5
+  },
+  "batch_settlement": {
+    "active_queues": 8
+  }
+}
+```
+
+**→ [Observability Guide](docs/OBSERVABILITY.md)**
 
 ## Deployment
 
-### Production Checklist
+### Docker
 
-- ✅ Enable API key authentication (`API_KEYS`)
-- ✅ Set admin key (`ADMIN_API_KEY`)
-- ✅ Restrict CORS origins in `config.toml`
-- ✅ Enable rate limiting
-- ✅ Deploy behind HTTPS reverse proxy (Nginx, Caddy, Cloudflare)
-- ✅ Configure OpenTelemetry for monitoring
-- ✅ Set up log aggregation for security events
-- ✅ Test rate limiting and IP filtering before production
-
-### Docker Compose Example
-
-```yaml
-version: '3.8'
-services:
-  facilitator:
-    image: ghcr.io/infra402-facilitator:latest
-    ports:
-      - "8080:8080"
-    env_file:
-      - .env
-    volumes:
-      - ./config.toml:/app/config.toml
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+```bash
+docker run -d \
+  -p 8080:8080 \
+  --env-file .env \
+  -v ./config.toml:/app/config.toml:ro \
+  infra402-facilitator:latest
 ```
 
-### Behind Nginx
+### Kubernetes
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name facilitator.example.com;
-
-    ssl_certificate /etc/ssl/certs/facilitator.crt;
-    ssl_certificate_key /etc/ssl/private/facilitator.key;
-
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header Host $host;
-    }
-}
+```bash
+kubectl apply -f deployment.yaml
+kubectl apply -f service.yaml
+kubectl apply -f ingress.yaml
 ```
+
+### Systemd
+
+```bash
+sudo systemctl enable facilitator
+sudo systemctl start facilitator
+```
+
+**→ [Deployment Guide](docs/DEPLOYMENT.md)**
 
 ## Environment Variables
 
 ### Required
-- `SIGNER_TYPE`: Signer type (currently only `private-key` supported)
-- `EVM_PRIVATE_KEY`: Hex-encoded private key for EVM chains (supports comma-separated list for multiple wallets - see [Performance & Scaling](#performance--scaling))
-- `SOLANA_PRIVATE_KEY`: Base58-encoded private key for Solana (if using Solana)
+```bash
+SIGNER_TYPE=private-key
+EVM_PRIVATE_KEY=0xYourPrivateKey    # Comma-separated for multiple wallets
+```
 
-### Server
-- `HOST`: Bind address (default: `0.0.0.0`)
-- `PORT`: HTTP port (default: `8080`)
+### Network RPCs
+```bash
+RPC_URL_BASE=https://mainnet.base.org
+RPC_URL_BSC=https://bsc-dataseed.binance.org
+RPC_URL_SOLANA=https://api.mainnet-beta.solana.com
+# ... (see Networks Guide for complete list)
+```
 
-### Security (optional)
-- `API_KEYS`: Comma-separated list of valid API keys
-- `ADMIN_API_KEY`: Admin authentication key
-- `CONFIG_FILE`: Path to config.toml (default: `./config.toml`)
+### Security (Optional)
+```bash
+API_KEYS=key1,key2,key3
+ADMIN_API_KEY=admin-secret
+CONFIG_FILE=./config.toml
+```
 
-### Network RPCs (configure as needed)
-- `RPC_URL_BASE`, `RPC_URL_BASE_SEPOLIA`
-- `RPC_URL_BSC`, `RPC_URL_BSC_TESTNET`
-- `RPC_URL_SOLANA`, `RPC_URL_SOLANA_DEVNET`
-- `RPC_URL_AVALANCHE`, `RPC_URL_AVALANCHE_FUJI`
-- `RPC_URL_POLYGON`, `RPC_URL_POLYGON_AMOY`
-- `RPC_URL_SEI`, `RPC_URL_SEI_TESTNET`
-- `RPC_URL_XDC`
-
-### Observability (optional)
-- `RUST_LOG`: Log level (default: `info`)
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: OpenTelemetry collector endpoint
-- `OTEL_EXPORTER_OTLP_HEADERS`: Headers for OTLP export
-- `OTEL_EXPORTER_OTLP_PROTOCOL`: Protocol (`http/protobuf` or `grpc`)
-
-See [`.env.example`](.env.example) for complete configuration template.
-
-## Documentation
-
-- [Original x402-rs README](README.x402-rs.md) - Core x402 protocol documentation
-- [Security Documentation](docs/SECURITY.md) - Complete security feature reference
-- [Configuration Examples](config.toml.example) - Full config reference
-
-## About x402
-
-The [x402 protocol](https://docs.cdp.coinbase.com/x402/docs/overview) is a standard for making blockchain payments through HTTP using the `402 Payment Required` status code.
-
-**Flow:**
-1. Client requests protected resource
-2. Server responds with `402 Payment Required` and payment requirements
-3. Client creates signed payment payload
-4. Facilitator verifies signature and payment details
-5. Facilitator settles payment on-chain
-6. Server grants access to resource
-
-**Benefits:**
-- No server-side blockchain integration required
-- Cryptographic payment verification
-- Stateless facilitator architecture (never holds funds)
-- Compatible with existing HTTP tooling
-
-## Credits
-
-Built on [x402-rs](https://github.com/x402-rs/x402-rs) by Sergey Ukustov.
-
-This repository extends x402-rs with production-ready security features:
-- Abuse detection middleware
-- Enhanced rate limiting with token bucket algorithm
-- Admin authentication and monitoring
-- Background cleanup tasks
-- Enhanced IP filtering
-- Comprehensive security logging
-
-For the original x402-rs implementation and protocol details, see [README.x402-rs.md](README.x402-rs.md).
-
-## Resources
-
-- [x402 Protocol Specification](https://x402.org)
-- [x402 Overview by Coinbase](https://docs.cdp.coinbase.com/x402/docs/overview)
-- [Facilitator Documentation by Coinbase](https://docs.cdp.coinbase.com/x402/docs/facilitator)
-- [x402-rs Repository](https://github.com/x402-rs/x402-rs)
+### Observability (Optional)
+```bash
+RUST_LOG=info
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io:443
+OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_API_KEY
+```
 
 ## Development
 
-### Prerequisites
-- Rust 1.80+
-- Cargo
-
-### Build
-
 ```bash
+# Build
 cargo build
-```
 
-### Run Locally
-
-```bash
-cargo run
-```
-
-### Run Tests
-
-```bash
+# Run tests
 cargo test
+
+# Run locally
+cargo run
+
+# Format and lint
+cargo fmt
+cargo clippy
 ```
 
-### Build Docker Image
+**→ [Development Guide](docs/DEVELOPMENT.md)**
 
-```bash
-docker build -t infra402-facilitator .
-```
+## About x402
 
-## Contributing
+The [x402 protocol](https://x402.org) enables blockchain payments through HTTP using the `402 Payment Required` status code. Facilitators verify payment signatures off-chain and execute settlements on-chain, eliminating the need for server-side blockchain integration.
 
-Contributions welcome! Please open issues or pull requests for:
-- Bug fixes
-- Security improvements
-- Documentation updates
-- Feature enhancements
+**→ [x402 Protocol Reference](docs/X402_PROTOCOL.md)**
+
+## Credits
+
+Built on [x402-rs](https://github.com/x402-rs/x402-rs) by Sergey Ukustov, extended with:
+- Enterprise security features (rate limiting, abuse detection, IP filtering)
+- Multi-wallet concurrency for horizontal scaling
+- Multicall3 batch settlement for 100-150x throughput
+- Comprehensive observability (OpenTelemetry, structured logging)
+- Production deployment tooling (Docker, Kubernetes, systemd)
+
+## Resources
+
+- **x402 Protocol**: [x402.org](https://x402.org)
+- **Coinbase x402 Docs**: [docs.cdp.coinbase.com/x402](https://docs.cdp.coinbase.com/x402/docs/overview)
+- **x402-rs Repository**: [github.com/x402-rs/x402-rs](https://github.com/x402-rs/x402-rs)
+- **Issues**: [GitHub Issues](https://github.com/your-org/infra402-facilitator/issues)
+- **Security**: See [Security Policy](docs/SECURITY.md)
 
 ## License
 
@@ -628,4 +367,6 @@ Contributions welcome! Please open issues or pull requests for:
 
 ---
 
-**Security Disclosure:** For security vulnerabilities, please see [docs/SECURITY.md](docs/SECURITY.md#security-disclosure).
+**Need help?** Check the [documentation](docs/) or [open an issue](https://github.com/your-org/infra402-facilitator/issues).
+
+**Security disclosure?** See [Security Policy](docs/SECURITY.md#security-disclosure).

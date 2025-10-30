@@ -61,18 +61,17 @@ pub async fn get_settle_info() -> impl IntoResponse {
     }))
 }
 
-pub fn routes<F>() -> Router<Arc<F>>
-where
-    F: Facilitator<Error = FacilitatorLocalError> + Send + Sync + 'static,
+pub fn routes() -> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>
 {
+    type FacilitatorType = crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>;
     Router::new()
         .route("/", get(get_root))
         .route("/verify", get(get_verify_info))
-        .route("/verify", post(post_verify::<F>))
+        .route("/verify", post(post_verify::<FacilitatorType>))
         .route("/settle", get(get_settle_info))
-        .route("/settle", post(post_settle::<F>))
-        .route("/supported", get(get_supported::<F>))
-        .route("/health", get(get_health::<F>))
+        .route("/settle", post(post_settle))
+        .route("/supported", get(get_supported::<FacilitatorType>))
+        .route("/health", get(get_health::<FacilitatorType>))
 }
 
 pub fn admin_routes() -> Router {
@@ -129,19 +128,33 @@ pub async fn get_root() -> impl IntoResponse {
     (StatusCode::OK, Html(html)).into_response()
 }
 
-/// `GET /admin/stats`: Returns abuse detection statistics.
+/// `GET /admin/stats`: Returns abuse detection and batch queue statistics.
 ///
 /// This endpoint requires admin authentication via the `X-Admin-Key` header.
-/// Returns current statistics about tracked IPs and suspicious activity.
+/// Returns current statistics about tracked IPs, suspicious activity, and batch processing.
 #[instrument(skip_all)]
 pub async fn get_admin_stats(
     Extension(abuse_detector): Extension<AbuseDetector>,
+    Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
 ) -> impl IntoResponse {
-    let stats = abuse_detector.get_stats();
-    (StatusCode::OK, Json(json!({
-        "total_ips_tracked": stats.total_ips_tracked,
-        "suspicious_ips": stats.suspicious_ips,
-    }))).into_response()
+    let abuse_stats = abuse_detector.get_stats();
+
+    let mut response = json!({
+        "abuse_detection": {
+            "total_ips_tracked": abuse_stats.total_ips_tracked,
+            "suspicious_ips": abuse_stats.suspicious_ips,
+        }
+    });
+
+    // Add batch queue stats if batching is enabled
+    if let Some(manager) = batch_queue_manager {
+        let batch_stats = manager.stats();
+        response["batch_settlement"] = json!({
+            "active_queues": batch_stats.active_queues,
+        });
+    }
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 /// `GET /supported`: Lists the x402 payment schemes and networks supported by this facilitator.
@@ -212,16 +225,78 @@ where
 ///
 /// Requires API key authentication if enabled via `API_KEYS` environment variable.
 #[instrument(skip_all)]
-pub async fn post_settle<F>(
-    State(facilitator): State<Arc<F>>,
+pub async fn post_settle(
+    State(facilitator): State<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>,
+    Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
     Extension(abuse_detector): Extension<AbuseDetector>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<SettleRequest>,
 ) -> impl IntoResponse
-where
-    F: Facilitator<Error = FacilitatorLocalError>,
 {
-    let result = facilitator.settle(&body).await;
+    // If batching is enabled, route to batch queue
+    let result = if let Some(manager) = batch_queue_manager {
+        // Extract network from request
+        let network = body.payment_payload.network;
+
+        // Get network provider for this network to pre-select facilitator address
+        use crate::provider_cache::ProviderMap;
+        let network_provider = match facilitator.provider_map().by_network(network) {
+            Some(provider) => provider,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("Unsupported network: {}", network),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        // Pre-select facilitator address using round-robin
+        use crate::chain::NetworkProviderOps;
+        let facilitator_addr: alloy::primitives::Address = match network_provider {
+            crate::chain::NetworkProvider::Evm(evm_provider) => {
+                evm_provider.next_signer_address()
+            }
+            crate::chain::NetworkProvider::Solana(solana_provider) => {
+                // For Solana, extract address from signer_address
+                use crate::types::MixedAddress;
+                match solana_provider.signer_address() {
+                    MixedAddress::Evm(addr) => addr.0,  // Extract inner Address
+                    MixedAddress::Solana(_) | MixedAddress::Offchain(_) => {
+                        // Solana doesn't use EVM-style facilitator addresses
+                        // Use a dummy address for queue key (won't be used for signing)
+                        alloy::primitives::Address::ZERO
+                    }
+                }
+            }
+        };
+
+        tracing::debug!(
+            %facilitator_addr,
+            %network,
+            "enqueuing settlement request for batch processing"
+        );
+
+        // Enqueue to batch queue manager
+        let rx = manager.enqueue(facilitator_addr, network, body.clone()).await;
+
+        // Wait for batch processing to complete
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::error!("batch processor dropped response channel");
+                Err(FacilitatorLocalError::ContractCall(
+                    "Batch processing failed - channel closed".to_string(),
+                ))
+            }
+        }
+    } else {
+        // Direct settlement (no batching)
+        use crate::facilitator::Facilitator;
+        facilitator.settle(&body).await
+    };
 
     match result {
         Ok(valid_response) => (StatusCode::OK, Json(valid_response)).into_response(),

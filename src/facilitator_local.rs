@@ -34,6 +34,11 @@ impl<A> FacilitatorLocal<A> {
     pub fn new(provider_map: A) -> Self {
         FacilitatorLocal { provider_map }
     }
+
+    /// Gets a reference to the provider map.
+    pub fn provider_map(&self) -> &A {
+        &self.provider_map
+    }
 }
 
 impl<A, E> Facilitator for FacilitatorLocal<A>

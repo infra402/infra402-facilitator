@@ -21,6 +21,7 @@ pub struct FacilitatorConfig {
     pub request: RequestConfig,
     pub security: SecurityConfig,
     pub transaction: TransactionConfig,
+    pub batch_settlement: BatchSettlementConfig,
 }
 
 impl Default for FacilitatorConfig {
@@ -32,6 +33,7 @@ impl Default for FacilitatorConfig {
             request: RequestConfig::default(),
             security: SecurityConfig::default(),
             transaction: TransactionConfig::default(),
+            batch_settlement: BatchSettlementConfig::default(),
         }
     }
 }
@@ -217,6 +219,114 @@ impl Default for TransactionConfig {
     }
 }
 
+/// Batch settlement configuration for high-throughput scenarios.
+///
+/// Enables bundling multiple settlement transactions into single Multicall3 transactions
+/// to improve throughput and reduce gas costs.
+///
+/// Supports per-network configuration overrides to tune batching parameters independently
+/// for each blockchain network (e.g., different batch sizes for Base vs BSC).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct BatchSettlementConfig {
+    /// Enable batch settlement processing globally.
+    /// Default: false (opt-in for backward compatibility)
+    pub enabled: bool,
+
+    /// Maximum number of settlements per batch (global default).
+    /// Limited by block gas limit (~30M gas / ~55k per transfer = ~545 theoretical max).
+    /// Default: 150 (conservative for safety)
+    pub max_batch_size: usize,
+
+    /// Maximum time to wait before flushing batch in milliseconds (global default).
+    /// Default: 500ms (balance between latency and throughput)
+    pub max_wait_ms: u64,
+
+    /// Minimum batch size for immediate flush (global default).
+    /// If queue reaches this size, flush immediately without waiting.
+    /// Default: 10 (avoid waiting for small batches)
+    pub min_batch_size: usize,
+
+    /// Allow partial failures in batch - Multicall3 allowFailure flag (global default).
+    /// - true: Individual transfers can fail without reverting entire batch
+    /// - false: Any failure reverts entire batch (safer default)
+    /// Default: false
+    pub allow_partial_failure: bool,
+
+    /// Per-network configuration overrides.
+    /// Key is the network name (e.g., "base", "bsc", "avalanche").
+    /// Each network can override any subset of the global defaults.
+    #[serde(default)]
+    pub networks: HashMap<String, NetworkBatchConfig>,
+}
+
+impl Default for BatchSettlementConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Opt-in for safety
+            max_batch_size: 150,
+            max_wait_ms: 500,
+            min_batch_size: 10,
+            allow_partial_failure: false,
+            networks: HashMap::new(),
+        }
+    }
+}
+
+impl BatchSettlementConfig {
+    /// Get the effective configuration for a specific network.
+    ///
+    /// Returns a resolved configuration that applies network-specific overrides
+    /// on top of global defaults.
+    pub fn for_network(&self, network_name: &str) -> ResolvedBatchConfig {
+        let network_override = self.networks.get(network_name);
+
+        ResolvedBatchConfig {
+            max_batch_size: network_override
+                .and_then(|n| n.max_batch_size)
+                .unwrap_or(self.max_batch_size),
+            max_wait_ms: network_override
+                .and_then(|n| n.max_wait_ms)
+                .unwrap_or(self.max_wait_ms),
+            min_batch_size: network_override
+                .and_then(|n| n.min_batch_size)
+                .unwrap_or(self.min_batch_size),
+            allow_partial_failure: network_override
+                .and_then(|n| n.allow_partial_failure)
+                .unwrap_or(self.allow_partial_failure),
+        }
+    }
+}
+
+/// Per-network batch settlement configuration overrides.
+///
+/// All fields are optional - only specified fields override global defaults.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NetworkBatchConfig {
+    /// Override max_batch_size for this network.
+    pub max_batch_size: Option<usize>,
+
+    /// Override max_wait_ms for this network.
+    pub max_wait_ms: Option<u64>,
+
+    /// Override min_batch_size for this network.
+    pub min_batch_size: Option<usize>,
+
+    /// Override allow_partial_failure for this network.
+    pub allow_partial_failure: Option<bool>,
+}
+
+/// Resolved batch configuration for a specific network.
+///
+/// Contains the final effective values after applying network-specific overrides.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedBatchConfig {
+    pub max_batch_size: usize,
+    pub max_wait_ms: u64,
+    pub min_batch_size: usize,
+    pub allow_partial_failure: bool,
+}
+
 /// Custom serde module for IP network lists.
 mod ip_list_serde {
     use ipnetwork::IpNetwork;
@@ -266,5 +376,104 @@ blocked_ips = ["192.0.2.0/24"]
         let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
         assert_eq!(config.ip_filtering.allowed_ips.len(), 2);
         assert_eq!(config.ip_filtering.blocked_ips.len(), 1);
+    }
+
+    #[test]
+    fn test_batch_settlement_default() {
+        let config = BatchSettlementConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.max_batch_size, 150);
+        assert_eq!(config.max_wait_ms, 500);
+        assert_eq!(config.min_batch_size, 10);
+        assert!(!config.allow_partial_failure);
+        assert!(config.networks.is_empty());
+    }
+
+    #[test]
+    fn test_batch_settlement_global_config() {
+        let config_str = r#"
+[batch_settlement]
+enabled = true
+max_batch_size = 200
+max_wait_ms = 1000
+min_batch_size = 20
+allow_partial_failure = true
+"#;
+
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+        assert!(config.batch_settlement.enabled);
+        assert_eq!(config.batch_settlement.max_batch_size, 200);
+        assert_eq!(config.batch_settlement.max_wait_ms, 1000);
+        assert_eq!(config.batch_settlement.min_batch_size, 20);
+        assert!(config.batch_settlement.allow_partial_failure);
+    }
+
+    #[test]
+    fn test_batch_settlement_per_network_config() {
+        let config_str = r#"
+[batch_settlement]
+enabled = true
+max_batch_size = 150
+max_wait_ms = 500
+min_batch_size = 10
+allow_partial_failure = false
+
+[batch_settlement.networks.bsc]
+max_batch_size = 200
+allow_partial_failure = true
+
+[batch_settlement.networks.base]
+max_wait_ms = 250
+min_batch_size = 5
+"#;
+
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+
+        // Test global defaults
+        let global = config.batch_settlement.for_network("unknown-network");
+        assert_eq!(global.max_batch_size, 150);
+        assert_eq!(global.max_wait_ms, 500);
+        assert_eq!(global.min_batch_size, 10);
+        assert!(!global.allow_partial_failure);
+
+        // Test BSC overrides (partial)
+        let bsc = config.batch_settlement.for_network("bsc");
+        assert_eq!(bsc.max_batch_size, 200); // overridden
+        assert_eq!(bsc.max_wait_ms, 500); // global default
+        assert_eq!(bsc.min_batch_size, 10); // global default
+        assert!(bsc.allow_partial_failure); // overridden
+
+        // Test Base overrides (different subset)
+        let base = config.batch_settlement.for_network("base");
+        assert_eq!(base.max_batch_size, 150); // global default
+        assert_eq!(base.max_wait_ms, 250); // overridden
+        assert_eq!(base.min_batch_size, 5); // overridden
+        assert!(!base.allow_partial_failure); // global default
+    }
+
+    #[test]
+    fn test_batch_settlement_network_complete_override() {
+        let config_str = r#"
+[batch_settlement]
+enabled = true
+max_batch_size = 100
+max_wait_ms = 300
+min_batch_size = 5
+allow_partial_failure = false
+
+[batch_settlement.networks.avalanche]
+max_batch_size = 300
+max_wait_ms = 2000
+min_batch_size = 50
+allow_partial_failure = true
+"#;
+
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+
+        let avalanche = config.batch_settlement.for_network("avalanche");
+        assert_eq!(avalanche.max_batch_size, 300);
+        assert_eq!(avalanche.max_wait_ms, 2000);
+        assert_eq!(avalanche.min_batch_size, 50);
+        assert!(avalanche.allow_partial_failure);
     }
 }

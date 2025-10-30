@@ -142,3 +142,59 @@ rpc_request_timeout_seconds = 20
 block_time_seconds = 2
 receipt_timeout_blocks = 30  # 60 seconds total
 rpc_request_timeout_seconds = 20
+
+# ================================
+# Batch Settlement Configuration
+# ================================
+# Enable Multicall3 batching to bundle multiple settlements into single transactions
+# for improved throughput (up to 100-150x) and reduced gas costs (~75% savings)
+#
+# Supports per-network configuration overrides to tune batching parameters independently
+# for each blockchain network (e.g., different batch sizes for Base vs BSC)
+[batch_settlement]
+# Enable batching globally (default: false for backward compatibility)
+enabled = false
+
+# Global default: Maximum settlements per batch (default: 150)
+# Theoretical max ~545 based on gas limit, but 150 is safer
+max_batch_size = 150
+
+# Global default: Maximum milliseconds to wait before flushing batch (default: 500)
+# Lower = better latency, higher = better batching efficiency
+max_wait_ms = 500
+
+# Global default: Minimum batch size for immediate flush (default: 10)
+# If queue reaches this size, flush immediately without waiting
+min_batch_size = 100
+
+# Global default: Allow individual transfers to fail without reverting entire batch (default: false)
+# false = strict (any failure reverts all), true = permissive (continue on failures)
+allow_partial_failure = false
+
+# Per-network configuration overrides (optional)
+# Only specified fields override global defaults for each network
+# Network names: base, base-sepolia, bsc, bsc-testnet, avalanche, avalanche-fuji,
+#                polygon, polygon-amoy, sei, sei-testnet, xdc, solana, solana-devnet
+
+# Example: BSC with larger batches and longer wait time
+# [batch_settlement.networks.bsc]
+# max_batch_size = 200
+# max_wait_ms = 1000
+# allow_partial_failure = true
+
+[batch_settlement.networks.bsc-testnet]
+max_batch_size = 100
+max_wait_ms = 1000
+allow_partial_failure = false
+
+# Example: Base with smaller batches and faster flush for lower latency
+# [batch_settlement.networks.base]
+# max_batch_size = 50
+# max_wait_ms = 250
+# min_batch_size = 5
+
+# Example: Avalanche with aggressive batching for high throughput
+# [batch_settlement.networks.avalanche]
+# max_batch_size = 300
+# max_wait_ms = 2000
+# allow_partial_failure = true

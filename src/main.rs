@@ -35,6 +35,8 @@ use crate::security::abuse::{AbuseDetector, AbuseDetectorConfig};
 use crate::sig_down::SigDown;
 use crate::telemetry::Telemetry;
 
+mod batch_processor;
+mod batch_queue;
 mod chain;
 mod config;
 mod facilitator;
@@ -92,6 +94,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let facilitator = FacilitatorLocal::new(provider_cache);
     let axum_state = Arc::new(facilitator);
 
+    // Initialize batch queue manager if enabled in configuration
+    let batch_queue_manager = if app_config.batch_settlement.enabled {
+        tracing::info!(
+            max_batch_size = app_config.batch_settlement.max_batch_size,
+            max_wait_ms = app_config.batch_settlement.max_wait_ms,
+            min_batch_size = app_config.batch_settlement.min_batch_size,
+            allow_partial_failure = app_config.batch_settlement.allow_partial_failure,
+            "Batch settlement enabled - initializing queue manager"
+        );
+
+        let manager = Arc::new(crate::batch_queue::BatchQueueManager::new(
+            app_config.batch_settlement.clone(),
+            Arc::clone(&axum_state),
+        ));
+
+        Some(manager)
+    } else {
+        tracing::info!("Batch settlement disabled - using direct settlement");
+        None
+    };
+
     // Initialize security components
     let api_key_auth = ApiKeyAuth::from_env();
     let admin_auth = AdminAuth::from_env();
@@ -144,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Admin routes with separate authentication
     let admin_endpoints = Router::new()
         .merge(handlers::admin_routes())
+        .layer(axum::Extension(batch_queue_manager.clone()))
         .layer(axum::Extension(abuse_detector.clone()))
         .layer(axum::middleware::from_fn(move |req, next| {
             let auth = admin_auth_middleware.clone();
@@ -153,6 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_endpoints = Router::new()
         .merge(handlers::routes().with_state(axum_state))
         .merge(admin_endpoints)
+        .layer(axum::Extension(batch_queue_manager.clone()))
         .layer(axum::Extension(abuse_detector.clone()))
         .layer(tower::ServiceBuilder::new()
             .layer(axum::middleware::from_fn(move |req, next| {

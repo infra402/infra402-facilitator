@@ -89,7 +89,7 @@ const VALIDATOR_ADDRESS: alloy::primitives::Address =
 // Task-local storage for pre-selected facilitator address during settlement.
 // This allows settle_with_lock() to pass the locked address to send_transaction().
 tokio::task_local! {
-    static PRESELECTED_FACILITATOR: Address;
+    pub static PRESELECTED_FACILITATOR: Address;
 }
 
 /// Unified enum for ERC-3009 compatible token contracts (USDC and XBNB).
@@ -280,7 +280,7 @@ impl EvmProvider {
     }
 
     /// Round-robin selection of next signer from wallet.
-    fn next_signer_address(&self) -> Address {
+    pub fn next_signer_address(&self) -> Address {
         debug_assert!(!self.signer_addresses.is_empty());
         if self.signer_addresses.len() == 1 {
             self.signer_addresses[0]
@@ -293,7 +293,7 @@ impl EvmProvider {
 
     /// Get the settlement lock Arc for a specific facilitator address.
     /// Caller must lock it to ensure sequential processing.
-    fn get_settlement_lock(&self, address: Address) -> Arc<Mutex<()>> {
+    pub fn get_settlement_lock(&self, address: Address) -> Arc<Mutex<()>> {
         let entry = self
             .settlement_locks
             .entry(address)
@@ -957,6 +957,339 @@ where
         }];
         Ok(SupportedPaymentKindsResponse { kinds })
     }
+}
+
+/// Validated settlement data prepared for batching via Multicall3.
+///
+/// Contains all the information needed to include this settlement in a Multicall3 aggregate3 call.
+pub struct ValidatedSettlement {
+    /// Target contract address for the transfer
+    pub target: Address,
+    /// Encoded calldata for transferWithAuthorization
+    pub calldata: Bytes,
+    /// Payer address (from field)
+    pub payer: MixedAddress,
+    /// Network for this settlement
+    pub network: Network,
+    /// Optional EIP-6492 deployment data (if wallet not yet deployed)
+    pub deployment: Option<DeploymentData>,
+    /// Tracing metadata
+    pub metadata: SettlementMetadata,
+}
+
+/// EIP-6492 deployment data for counterfactual wallets.
+pub struct DeploymentData {
+    pub factory: Address,
+    pub factory_calldata: Bytes,
+}
+
+/// Metadata for settlement tracing and logging.
+pub struct SettlementMetadata {
+    pub from: Address,
+    pub to: Address,
+    pub value: U256,
+    pub valid_after: U256,
+    pub valid_before: U256,
+    pub nonce: FixedBytes<32>,
+    pub signature: Bytes,
+    pub contract_address: Address,
+    pub sig_kind: String,
+}
+
+impl EvmProvider {
+    /// Validates a settlement request and prepares it for batching.
+    ///
+    /// This method performs all validation checks (signature, balance, timing, etc.)
+    /// and returns a `ValidatedSettlement` that can be included in a Multicall3 batch.
+    ///
+    /// For EIP-6492 counterfactual wallets, includes deployment data if wallet not yet deployed.
+    pub async fn validate_and_prepare_settlement(
+        &self,
+        request: &SettleRequest,
+    ) -> Result<ValidatedSettlement, FacilitatorLocalError> {
+        let payload = &request.payment_payload;
+        let requirements = &request.payment_requirements;
+
+        // Validate payment and extract contract, payment data, and EIP-712 domain
+        let (contract, payment, eip712_domain) =
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements).await?;
+
+        let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
+        let payer = signed_message.address;
+
+        // Build transfer call and handle EIP-6492 deployment if needed
+        match signed_message.signature {
+            StructuredSignature::EIP6492 {
+                factory,
+                factory_calldata,
+                inner,
+                original: _,
+            } => {
+                let is_contract_deployed = is_contract_deployed(self.inner(), &payer).await?;
+                let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
+
+                let target = transfer_call.tx.target();
+                let calldata = transfer_call.tx.calldata();
+                let deployment = if !is_contract_deployed {
+                    Some(DeploymentData {
+                        factory,
+                        factory_calldata,
+                    })
+                } else {
+                    None
+                };
+
+                Ok(ValidatedSettlement {
+                    target,
+                    calldata,
+                    payer: payment.from.into(),
+                    network: self.chain().network(),
+                    deployment,
+                    metadata: SettlementMetadata {
+                        from: transfer_call.from,
+                        to: transfer_call.to,
+                        value: transfer_call.value,
+                        valid_after: transfer_call.valid_after,
+                        valid_before: transfer_call.valid_before,
+                        nonce: transfer_call.nonce,
+                        signature: transfer_call.signature,
+                        contract_address: transfer_call.contract_address,
+                        sig_kind: if is_contract_deployed {
+                            "EIP6492.deployed".to_string()
+                        } else {
+                            "EIP6492.counterfactual".to_string()
+                        },
+                    },
+                })
+            }
+            StructuredSignature::EIP1271(eip1271_signature) => {
+                let transfer_call =
+                    transferWithAuthorization_0(&contract, &payment, eip1271_signature).await?;
+
+                let target = transfer_call.tx.target();
+                let calldata = transfer_call.tx.calldata();
+
+                Ok(ValidatedSettlement {
+                    target,
+                    calldata,
+                    payer: payment.from.into(),
+                    network: self.chain().network(),
+                    deployment: None,
+                    metadata: SettlementMetadata {
+                        from: transfer_call.from,
+                        to: transfer_call.to,
+                        value: transfer_call.value,
+                        valid_after: transfer_call.valid_after,
+                        valid_before: transfer_call.valid_before,
+                        nonce: transfer_call.nonce,
+                        signature: transfer_call.signature,
+                        contract_address: transfer_call.contract_address,
+                        sig_kind: "EIP1271".to_string(),
+                    },
+                })
+            }
+        }
+    }
+
+    /// Settles a batch of validated settlements via Multicall3.
+    ///
+    /// This method takes pre-validated settlements and combines them into a single
+    /// Multicall3 aggregate3 transaction. The `allow_partial_failure` parameter controls
+    /// whether individual transfer failures should revert the entire batch.
+    ///
+    /// Returns a vector of SettleResponse objects corresponding to each input settlement.
+    pub async fn settle_batch(
+        &self,
+        settlements: Vec<ValidatedSettlement>,
+        allow_partial_failure: bool,
+    ) -> Result<Vec<SettleResponse>, FacilitatorLocalError> {
+        if settlements.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build Multicall3 Call3 structs
+        let mut calls = Vec::new();
+        let mut deployment_indices = Vec::new(); // Track which calls are deployments
+
+        for (_idx, settlement) in settlements.iter().enumerate() {
+            // Add deployment call if needed (EIP-6492 counterfactual wallet)
+            if let Some(deployment) = &settlement.deployment {
+                deployment_indices.push(calls.len());
+                calls.push(IMulticall3::Call3 {
+                    allowFailure: true, // Deployment may already be done
+                    target: deployment.factory,
+                    callData: deployment.factory_calldata.clone(),
+                });
+            }
+
+            // Add transfer call
+            calls.push(IMulticall3::Call3 {
+                allowFailure: allow_partial_failure,
+                target: settlement.target,
+                callData: settlement.calldata.clone(),
+            });
+        }
+
+        // Build and send Multicall3 aggregate3 transaction
+        let aggregate_call = IMulticall3::aggregate3Call { calls };
+        let receipt = self
+            .send_transaction(MetaTransaction {
+                to: MULTICALL3_ADDRESS,
+                calldata: aggregate_call.abi_encode().into(),
+                confirmations: 1,
+                from: None,
+            })
+            .instrument(
+                tracing::info_span!("batch_settle_multicall3",
+                    batch_size = settlements.len(),
+                    allow_partial_failure = allow_partial_failure,
+                    otel.kind = "client",
+                ),
+            )
+            .await?;
+
+        // Parse results from Multicall3 aggregate3 return data
+        let results = self.parse_aggregate3_results(&receipt, &deployment_indices, &settlements)?;
+
+        // Build SettleResponse for each settlement
+        let mut responses = Vec::with_capacity(settlements.len());
+        for (settlement, result) in settlements.iter().zip(results.iter()) {
+            let response = if result.success {
+                SettleResponse {
+                    success: true,
+                    error_reason: None,
+                    payer: settlement.payer.clone(),
+                    transaction: Some(TransactionHash::Evm(receipt.transaction_hash.0)),
+                    network: settlement.network,
+                }
+            } else {
+                SettleResponse {
+                    success: false,
+                    error_reason: Some(FacilitatorErrorReason::FreeForm(
+                        "Transfer failed in batch".to_string(),
+                    )),
+                    payer: settlement.payer.clone(),
+                    transaction: Some(TransactionHash::Evm(receipt.transaction_hash.0)),
+                    network: settlement.network,
+                }
+            };
+            responses.push(response);
+        }
+
+        Ok(responses)
+    }
+
+    /// Parse aggregate3 results from transaction receipt.
+    ///
+    /// Filters out deployment calls (tracked by deployment_indices) and returns only
+    /// the transfer call results.
+    ///
+    /// This method checks for ERC-20 Transfer events in the transaction logs to determine
+    /// which settlements succeeded. Each successful transfer emits a Transfer(from, to, value) event.
+    ///
+    /// Matches Transfer events to individual settlements based on from/to/value, enabling
+    /// accurate per-settlement success tracking when allow_partial_failure is true.
+    fn parse_aggregate3_results(
+        &self,
+        receipt: &alloy::rpc::types::TransactionReceipt,
+        _deployment_indices: &[usize],
+        settlements: &[ValidatedSettlement],
+    ) -> Result<Vec<Aggregate3Result>, FacilitatorLocalError> {
+        // If the transaction failed entirely, all transfers failed
+        if !receipt.status() {
+            return Ok(vec![
+                Aggregate3Result {
+                    success: false,
+                    return_data: Bytes::new(),
+                };
+                settlements.len()
+            ]);
+        }
+
+        // Parse Transfer events from logs
+        // Transfer(address indexed from, address indexed to, uint256 value)
+        // Event signature: keccak256("Transfer(address,address,uint256)")
+        let transfer_event_signature = alloy::primitives::b256!(
+            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        );
+
+        let mut transfer_events = Vec::new();
+        for log in &receipt.inner.as_receipt().unwrap().logs {
+            // Check if this is a Transfer event
+            if log.topics().len() >= 3 && log.topics()[0] == transfer_event_signature {
+                // Extract from and to addresses from indexed topics
+                let from = Address::from_word(log.topics()[1]);
+                let to = Address::from_word(log.topics()[2]);
+
+                // Extract value from log data (uint256)
+                let value = if log.data().data.len() >= 32 {
+                    U256::from_be_slice(&log.data().data[..32])
+                } else {
+                    U256::ZERO
+                };
+
+                transfer_events.push((from, to, value));
+            }
+        }
+
+        tracing::debug!(
+            transfer_count = transfer_events.len(),
+            expected_count = settlements.len(),
+            "parsed Transfer events from batch settlement receipt"
+        );
+
+        // Match each settlement to a Transfer event
+        let mut results = Vec::with_capacity(settlements.len());
+        for settlement in settlements {
+            // Look for a matching Transfer event (from, to, value)
+            let found = transfer_events.iter().any(|(from, to, value)| {
+                *from == settlement.metadata.from
+                    && *to == settlement.metadata.to
+                    && *value == settlement.metadata.value
+            });
+
+            if found {
+                tracing::trace!(
+                    from = %settlement.metadata.from,
+                    to = %settlement.metadata.to,
+                    value = %settlement.metadata.value,
+                    "matched settlement to Transfer event"
+                );
+                results.push(Aggregate3Result {
+                    success: true,
+                    return_data: Bytes::new(),
+                });
+            } else {
+                tracing::warn!(
+                    from = %settlement.metadata.from,
+                    to = %settlement.metadata.to,
+                    value = %settlement.metadata.value,
+                    "no matching Transfer event found for settlement"
+                );
+                results.push(Aggregate3Result {
+                    success: false,
+                    return_data: Bytes::new(),
+                });
+            }
+        }
+
+        let success_count = results.iter().filter(|r| r.success).count();
+        tracing::info!(
+            success_count,
+            total_count = settlements.len(),
+            "batch settlement results parsed"
+        );
+
+        Ok(results)
+    }
+}
+
+/// Result from a single call in Multicall3.aggregate3
+#[derive(Clone)]
+struct Aggregate3Result {
+    success: bool,
+    #[allow(dead_code)]
+    return_data: Bytes,
 }
 
 /// Unified enum for ERC-3009 `transferWithAuthorization` call builders.
