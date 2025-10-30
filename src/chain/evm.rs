@@ -86,6 +86,12 @@ sol! {
 const VALIDATOR_ADDRESS: alloy::primitives::Address =
     address!("0xdAcD51A54883eb67D95FAEb2BBfdC4a9a6BD2a3B");
 
+// Task-local storage for pre-selected facilitator address during settlement.
+// This allows settle_with_lock() to pass the locked address to send_transaction().
+tokio::task_local! {
+    static PRESELECTED_FACILITATOR: Address;
+}
+
 /// Unified enum for ERC-3009 compatible token contracts (USDC and XBNB).
 ///
 /// Both USDC and XBNB implement the ERC-3009 `transferWithAuthorization` interface.
@@ -196,6 +202,12 @@ pub struct EvmProvider {
     signer_addresses: Arc<Vec<Address>>,
     /// Current position in round-robin signer rotation.
     signer_cursor: Arc<AtomicUsize>,
+    /// Per-address settlement locks to ensure FIFO ordering and prevent nonce race conditions.
+    /// Each facilitator address has its own mutex to serialize settlements.
+    settlement_locks: Arc<DashMap<Address, Arc<Mutex<()>>>>,
+    /// In-flight request tracking by signature hash to prevent duplicate submissions.
+    /// Maps signature hash to a lock, ensuring only one request per signature is processed at a time.
+    inflight_requests: Arc<DashMap<[u8; 32], Arc<Mutex<()>>>>,
 }
 
 impl EvmProvider {
@@ -266,6 +278,8 @@ impl EvmProvider {
             chain,
             signer_addresses,
             signer_cursor,
+            settlement_locks: Arc::new(DashMap::new()),
+            inflight_requests: Arc::new(DashMap::new()),
         })
     }
 
@@ -279,6 +293,92 @@ impl EvmProvider {
                 self.signer_cursor.fetch_add(1, Ordering::Relaxed) % self.signer_addresses.len();
             self.signer_addresses[next]
         }
+    }
+
+    /// Get the settlement lock Arc for a specific facilitator address.
+    /// Caller must lock it to ensure sequential processing.
+    fn get_settlement_lock(&self, address: Address) -> Arc<Mutex<()>> {
+        let entry = self
+            .settlement_locks
+            .entry(address)
+            .or_insert_with(|| Arc::new(Mutex::new(())));
+        Arc::clone(entry.value())
+    }
+
+    /// Get the request lock Arc for a specific signature hash.
+    /// Caller can try_lock() to check for duplicates.
+    fn get_request_lock(&self, sig_hash: [u8; 32]) -> Arc<Mutex<()>> {
+        let entry = self
+            .inflight_requests
+            .entry(sig_hash)
+            .or_insert_with(|| Arc::new(Mutex::new(())));
+        Arc::clone(entry.value())
+    }
+
+    /// Settle with proper locking to prevent nonce race conditions.
+    ///
+    /// This method wraps the trait's settle() implementation with:
+    /// 1. Request deduplication (prevents duplicate signatures)
+    /// 2. Per-address settlement serialization (ensures FIFO nonce ordering)
+    ///
+    /// The locks are acquired BEFORE validation to ensure proper ordering based on arrival time,
+    /// not validation completion time.
+    pub async fn settle_with_lock(&self, request: &SettleRequest) -> Result<SettleResponse, FacilitatorLocalError> {
+        // Step 1: Extract signature for deduplication
+        let sig_bytes = match &request.payment_payload.payload {
+            crate::types::ExactPaymentPayload::Evm(evm_payload) => evm_payload.signature.0.as_slice(),
+            crate::types::ExactPaymentPayload::Solana(_) => {
+                // Solana uses different signature format, skip deduplication for now
+                return Facilitator::settle(self, request).await;
+            }
+        };
+        let sig_hash: [u8; 32] = alloy::primitives::keccak256(sig_bytes).into();
+
+        // Step 2: Check for duplicate in-flight requests
+        let request_lock = self.get_request_lock(sig_hash);
+        let _request_guard = match request_lock.try_lock() {
+            Ok(guard) => {
+                tracing::debug!(sig_hash = %hex::encode(sig_hash), "request lock acquired");
+                guard
+            }
+            Err(_) => {
+                // Request with same signature is already being processed
+                tracing::warn!(
+                    sig_hash = %hex::encode(sig_hash),
+                    "rejecting duplicate settlement request"
+                );
+                let payer_address = match &request.payment_payload.payload {
+                    crate::types::ExactPaymentPayload::Evm(evm_payload) => {
+                        crate::types::MixedAddress::from(evm_payload.authorization.from)
+                    }
+                    _ => unreachable!(),
+                };
+                return Err(FacilitatorLocalError::InvalidSignature(
+                    payer_address,
+                    "duplicate request already in flight".into()
+                ));
+            }
+        };
+
+        // Step 3: Select facilitator address early to acquire settlement lock BEFORE validation
+        // This ensures FIFO ordering - earlier requests lock first regardless of validation timing
+        let facilitator_address = self.next_signer_address();
+        tracing::info!(
+            %facilitator_address,
+            sig_hash = %hex::encode(&sig_hash[..8]),
+            "processing settlement request"
+        );
+
+        // Step 4: Acquire settlement lock to serialize transactions from this facilitator address
+        // This prevents nonce race conditions by ensuring sequential processing per address
+        let settlement_lock = self.get_settlement_lock(facilitator_address);
+        tracing::debug!(%facilitator_address, "acquiring settlement lock");
+        let _settlement_guard = settlement_lock.lock().await;
+        tracing::debug!(%facilitator_address, "settlement lock acquired");
+
+        // Step 5: Call the trait's settle method with pre-selected facilitator address
+        // Use task-local storage to pass the address to send_transaction()
+        PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await
     }
 }
 
@@ -309,6 +409,9 @@ pub struct MetaTransaction {
     pub calldata: Bytes,
     /// Number of block confirmations to wait for.
     pub confirmations: u64,
+    /// Optional sender address. If None, uses round-robin selection via next_signer_address().
+    /// Should be set when the address has been pre-selected for locking purposes.
+    pub from: Option<Address>,
 }
 
 impl MetaEvmProvider for EvmProvider {
@@ -352,9 +455,14 @@ impl MetaEvmProvider for EvmProvider {
         &self,
         tx: MetaTransaction,
     ) -> Result<TransactionReceipt, Self::Error> {
+        // Use pre-selected address if provided, otherwise check task-local, otherwise use round-robin
+        let from_address = tx.from.or_else(|| {
+            PRESELECTED_FACILITATOR.try_with(|addr| *addr).ok()
+        }).unwrap_or_else(|| self.next_signer_address());
+
         let mut txr = TransactionRequest::default()
             .with_to(tx.to)
-            .with_from(self.next_signer_address())
+            .with_from(from_address)
             .with_input(tx.calldata);
         if !self.eip1559 {
             let provider = &self.inner;
@@ -385,7 +493,24 @@ impl MetaEvmProvider for EvmProvider {
             .inner
             .send_transaction(txr)
             .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+            .map_err(|e| {
+                let error_str = format!("{e:?}");
+                // Detect nonce collision errors
+                if error_str.contains("nonce too low") || error_str.contains("nonce too high") {
+                    tracing::error!(
+                        from = %from_address,
+                        error = %error_str,
+                        "❌ NONCE COLLISION DETECTED - transaction rejected due to nonce mismatch"
+                    );
+                } else if error_str.contains("replacement transaction underpriced") {
+                    tracing::warn!(
+                        from = %from_address,
+                        error = %error_str,
+                        "transaction replacement attempted with insufficient gas price"
+                    );
+                }
+                FacilitatorLocalError::ContractCall(error_str)
+            })?;
 
         // Use tokio::select! for better cancellation semantics
         let receipt_fut = pending_tx
@@ -739,6 +864,7 @@ where
                         to: tx_target,
                         calldata: tx_calldata,
                         confirmations: 1,
+                        from: None,
                     })
                     .instrument(
                         tracing::info_span!("call_transferWithAuthorization_0",
@@ -773,6 +899,7 @@ where
                         to: MULTICALL3_ADDRESS,
                         calldata: aggregate_call.abi_encode().into(),
                         confirmations: 1,
+                        from: None,
                     })
                     .instrument(
                         tracing::info_span!("call_transferWithAuthorization_0",
@@ -815,6 +942,7 @@ where
                     to: tx_target,
                     calldata: tx_calldata,
                     confirmations: 1,
+                    from: None,
                 })
                 .instrument(
                     tracing::info_span!("call_transferWithAuthorization_0",
@@ -1637,19 +1765,46 @@ impl NonceManager for PendingNonceManager {
         let mut nonce = nonce.lock().await;
         let new_nonce = if *nonce == NONE {
             // Initialize the nonce if we haven't seen this account before.
-            tracing::trace!(%address, "fetching nonce");
+            tracing::info!(%address, "initializing nonce for new address");
             match provider.get_transaction_count(address).pending().await {
-                Ok(nonce) => nonce,
-                Err(_) => {
-                    tracing::debug!(%address, "pending block tag not supported, using latest");
-                    provider.get_transaction_count(address).latest().await?
+                Ok(pending_nonce) => {
+                    tracing::info!(
+                        %address,
+                        nonce = pending_nonce,
+                        block_tag = "pending",
+                        "nonce fetched successfully"
+                    );
+                    pending_nonce
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        %address,
+                        error = ?e,
+                        "pending block tag not supported by RPC, falling back to latest"
+                    );
+                    let latest_nonce = provider.get_transaction_count(address).latest().await?;
+                    tracing::warn!(
+                        %address,
+                        nonce = latest_nonce,
+                        block_tag = "latest",
+                        "nonce fetched from latest block - may miss in-flight transactions"
+                    );
+                    latest_nonce
                 }
             }
         } else {
-            tracing::trace!(%address, current_nonce = *nonce, "incrementing nonce");
-            *nonce + 1
+            let prev_nonce = *nonce;
+            let next_nonce = prev_nonce + 1;
+            tracing::info!(
+                %address,
+                prev_nonce,
+                next_nonce,
+                "allocating next nonce"
+            );
+            next_nonce
         };
         *nonce = new_nonce;
+        tracing::debug!(%address, allocated_nonce = new_nonce, "nonce allocated and stored");
         Ok(new_nonce)
     }
 }
