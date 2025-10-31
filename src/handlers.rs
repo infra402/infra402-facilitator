@@ -293,9 +293,36 @@ pub async fn post_settle(
             }
         }
     } else {
-        // Direct settlement (no batching)
-        use crate::facilitator::Facilitator;
-        facilitator.settle(&body).await
+        // Direct settlement (no batching) - use settlement lock to prevent nonce collisions
+        let network = body.payment_payload.network;
+
+        use crate::provider_cache::ProviderMap;
+        let network_provider = match facilitator.provider_map().by_network(network) {
+            Some(provider) => provider,
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("Unsupported network: {}", network),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        // Use locked settlement for EVM to prevent nonce collisions
+        match network_provider {
+            crate::chain::NetworkProvider::Evm(evm_provider) => {
+                tracing::debug!(%network, "direct settlement with lock");
+                evm_provider.settle_with_lock(&body).await
+            }
+            crate::chain::NetworkProvider::Solana(_solana_provider) => {
+                // Solana settlements are sequential by nature
+                tracing::debug!(%network, "direct solana settlement");
+                use crate::facilitator::Facilitator;
+                network_provider.settle(&body).await
+            }
+        }
     };
 
     match result {
