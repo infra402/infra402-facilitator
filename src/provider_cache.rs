@@ -21,10 +21,41 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use alloy::primitives::Address;
+use tokio::sync::RwLock;
 
 use crate::chain::FromEnvByNetworkBuild;
 use crate::chain::NetworkProvider;
 use crate::network::Network;
+
+/// Cached EIP-712 domain information for a token contract.
+#[derive(Clone, Debug)]
+pub struct Eip712DomainCache {
+    /// The EIP-712 version string
+    pub version: String,
+    /// When this cache entry was created
+    pub cached_at: Instant,
+}
+
+impl Eip712DomainCache {
+    /// Cache TTL: 1 hour (versions rarely change)
+    const TTL: Duration = Duration::from_secs(3600);
+
+    /// Creates a new cache entry with the current timestamp
+    pub fn new(version: String) -> Self {
+        Self {
+            version,
+            cached_at: Instant::now(),
+        }
+    }
+
+    /// Returns true if this cache entry has expired
+    pub fn is_expired(&self) -> bool {
+        self.cached_at.elapsed() > Self::TTL
+    }
+}
 
 /// A cache of pre-initialized [`EthereumProvider`] instances keyed by network.
 ///
@@ -34,6 +65,8 @@ use crate::network::Network;
 /// Use [`ProviderCache::from_env`] to load credentials and connect using environment variables.
 pub struct ProviderCache {
     providers: HashMap<Network, Arc<NetworkProvider>>,
+    /// Cache of EIP-712 domain information by (network, token_address)
+    eip712_domain_cache: Arc<RwLock<HashMap<(Network, Address), Eip712DomainCache>>>,
 }
 
 /// A generic cache of pre-initialized Ethereum provider instances [`ProviderMap::Value`] keyed by network.
@@ -76,7 +109,37 @@ impl ProviderCache {
                 providers.insert(*network, Arc::new(network_provider));
             }
         }
-        Ok(Self { providers })
+        Ok(Self {
+            providers,
+            eip712_domain_cache: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    /// Gets a cached EIP-712 version for a token contract, if available and not expired.
+    pub async fn get_eip712_version(
+        &self,
+        network: Network,
+        token_address: Address,
+    ) -> Option<String> {
+        let cache = self.eip712_domain_cache.read().await;
+        cache.get(&(network, token_address)).and_then(|entry| {
+            if entry.is_expired() {
+                None
+            } else {
+                Some(entry.version.clone())
+            }
+        })
+    }
+
+    /// Caches an EIP-712 version for a token contract.
+    pub async fn set_eip712_version(
+        &self,
+        network: Network,
+        token_address: Address,
+        version: String,
+    ) {
+        let mut cache = self.eip712_domain_cache.write().await;
+        cache.insert((network, token_address), Eip712DomainCache::new(version));
     }
 }
 

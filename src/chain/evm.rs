@@ -207,6 +207,8 @@ pub struct EvmProvider {
     settlement_locks: Arc<DashMap<Address, Arc<Mutex<()>>>>,
     /// Nonce manager for resetting nonces on transaction failures.
     nonce_manager: PendingNonceManager,
+    /// EIP-712 version cache shared across all providers
+    eip712_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
 }
 
 impl EvmProvider {
@@ -342,6 +344,7 @@ impl EvmProvider {
             signer_cursor,
             settlement_locks: Arc::new(DashMap::new()),
             nonce_manager,
+            eip712_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -410,6 +413,8 @@ pub trait MetaEvmProvider {
     fn inner(&self) -> &Self::Inner;
     /// Returns reference to chain descriptor.
     fn chain(&self) -> &EvmChain;
+    /// Returns reference to EIP-712 version cache.
+    fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>;
 
     /// Sends a meta-transaction to the network.
     fn send_transaction(
@@ -441,6 +446,10 @@ impl MetaEvmProvider for EvmProvider {
 
     fn chain(&self) -> &EvmChain {
         &self.chain
+    }
+
+    fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>> {
+        &self.eip712_version_cache
     }
 
     /// Send a meta-transaction with provided `to`, `calldata`, and automatically selected signer.
@@ -631,12 +640,16 @@ where
     async fn verify(&self, request: &VerifyRequest) -> Result<VerifyResponse, Self::Error> {
         let payload = &request.payment_payload;
         let requirements = &request.payment_requirements;
+
+        // Perform payment validation WITHOUT balance check (we'll batch it with signature validation)
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), true).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
         let hash = signed_message.hash;
+        let max_amount_required = requirements.max_amount_required.0;
+
         match signed_message.signature {
             StructuredSignature::EIP6492 {
                 factory: _,
@@ -650,17 +663,19 @@ where
                     validator6492.isValidSigWithSideEffects(payer, hash, original);
                 // Prepare the call to simulate transfer the funds
                 let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
-                // Execute both calls in a single transaction simulation to accommodate for possible smart wallet creation
-                match transfer_call.tx {
-                    TransferWithAuthorizationCallBuilder::Usdc(tx) => {
-                        let (is_valid_signature_result, transfer_result) = call_with_fallback(
+                // Execute ALL three calls in a single Multicall3 transaction: balance + signature + transfer
+                match (&contract, transfer_call.tx) {
+                    (Erc3009Contract::Usdc(usdc_contract), TransferWithAuthorizationCallBuilder::Usdc(tx)) => {
+                        let balance_call = usdc_contract.balanceOf(payment.from.0);
+                        let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
                                 .multicall()
+                                .add(balance_call.clone())
                                 .add(is_valid_signature_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .instrument(tracing::info_span!("batched_verify_usdc",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -674,11 +689,12 @@ where
                             self
                                 .inner()
                                 .multicall()
+                                .add(balance_call)
                                 .add(is_valid_signature_call)
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .instrument(tracing::info_span!("batched_verify_usdc",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -691,7 +707,13 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "signature validation multicall"))?;
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check signature validation result
                         let is_valid_signature_result = is_valid_signature_result
                             .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
                         if !is_valid_signature_result {
@@ -700,17 +722,20 @@ where
                                 "Incorrect signature".to_string(),
                             ));
                         }
+                        // Check transfer simulation result
                         transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
-                        let (is_valid_signature_result, transfer_result) = call_with_fallback(
+                    (Erc3009Contract::Xbnb(xbnb_contract), TransferWithAuthorizationCallBuilder::Xbnb(tx)) => {
+                        let balance_call = xbnb_contract.balanceOf(payment.from.0);
+                        let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
                                 .multicall()
+                                .add(balance_call.clone())
                                 .add(is_valid_signature_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .instrument(tracing::info_span!("batched_verify_xbnb",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -724,11 +749,12 @@ where
                             self
                                 .inner()
                                 .multicall()
+                                .add(balance_call)
                                 .add(is_valid_signature_call)
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .instrument(tracing::info_span!("batched_verify_xbnb",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -741,7 +767,13 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "signature validation multicall"))?;
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check signature validation result
                         let is_valid_signature_result = is_valid_signature_result
                             .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
                         if !is_valid_signature_result {
@@ -750,7 +782,13 @@ where
                                 "Incorrect signature".to_string(),
                             ));
                         }
+                        // Check transfer simulation result
                         transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                    }
+                    _ => {
+                        return Err(FacilitatorLocalError::ContractCall(
+                            "Mismatched token contract and transfer call builder".to_string()
+                        ));
                     }
                 }
                 // Drop contract to release provider clone after multicall completes
@@ -760,13 +798,18 @@ where
                 // It is EOA or EIP-1271 signature, which we can pass to the transfer simulation
                 let transfer_call =
                     transferWithAuthorization_0(&contract, &payment, signature).await?;
-                match transfer_call.tx {
-                    TransferWithAuthorizationCallBuilder::Usdc(tx) => {
-                        call_with_fallback(
-                            tx.clone()
-                                .call()
-                                .into_future()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                // Batch balance check + transfer simulation in a single Multicall3
+                match (&contract, transfer_call.tx) {
+                    (Erc3009Contract::Usdc(usdc_contract), TransferWithAuthorizationCallBuilder::Usdc(tx)) => {
+                        let balance_call = usdc_contract.balanceOf(payment.from.0);
+                        let (balance_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call.clone())
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_usdc",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -777,11 +820,14 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            tx
-                                .call()
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call)
+                                .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .into_future()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_usdc",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -794,14 +840,25 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check transfer simulation result
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
-                        call_with_fallback(
-                            tx.clone()
-                                .call()
-                                .into_future()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                    (Erc3009Contract::Xbnb(xbnb_contract), TransferWithAuthorizationCallBuilder::Xbnb(tx)) => {
+                        let balance_call = xbnb_contract.balanceOf(payment.from.0);
+                        let (balance_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call.clone())
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_xbnb",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -812,11 +869,14 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            tx
-                                .call()
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call)
+                                .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .into_future()
-                                .instrument(tracing::info_span!("call_transferWithAuthorization_0",
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_xbnb",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -829,7 +889,19 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check transfer simulation result
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                    }
+                    _ => {
+                        return Err(FacilitatorLocalError::ContractCall(
+                            "Mismatched token contract and transfer call builder".to_string()
+                        ));
                     }
                 }
                 // Drop contract to release provider clone after call completes
@@ -862,7 +934,7 @@ where
         let payload = &request.payment_payload;
         let requirements = &request.payment_requirements;
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -1095,7 +1167,7 @@ impl EvmProvider {
 
         // Validate payment and extract contract, payment data, and EIP-712 domain
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -1693,6 +1765,7 @@ async fn assert_domain<P: Provider>(
     payload: &PaymentPayload,
     asset_address: &Address,
     requirements: &PaymentRequirements,
+    version_cache: Option<&Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>>,
 ) -> Result<Eip712Domain, FacilitatorLocalError> {
     let usdc = USDCDeployment::by_network(payload.network);
     let name = requirements
@@ -1717,54 +1790,124 @@ async fn assert_domain<P: Provider>(
     let version = if let Some(version) = version {
         version
     } else {
-        // Call .version() on USDC or .eip712Domain().version on XBNB
-        match token_contract {
-            Erc3009Contract::Usdc(usdc_contract) => {
-                call_with_fallback(
-                    usdc_contract
-                        .version()
-                        .call()
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_eip712_version",
-                            otel.kind = "client",
-                        )),
-                    usdc_contract
-                        .version()
-                        .call()
-                        .block(BlockId::Number(BlockNumberOrTag::Latest))
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_eip712_version",
-                            otel.kind = "client",
-                        )),
-                )
-                .await
-                .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
+        // Check cache first if available
+        if let Some(cache) = version_cache {
+            if let Some(cached_version) = cache.read().await.get(asset_address).and_then(|(v, cached_at)| {
+                const CACHE_TTL: Duration = Duration::from_secs(3600); // 1 hour
+                if cached_at.elapsed() > CACHE_TTL {
+                    None
+                } else {
+                    Some(v.clone())
+                }
+            }) {
+                tracing::debug!(token = %asset_address, version = %cached_version, "using cached EIP-712 version");
+                cached_version
+            } else {
+                // Cache miss or expired - fetch from RPC
+                let fetched_version = match token_contract {
+                    Erc3009Contract::Usdc(usdc_contract) => {
+                        call_with_fallback(
+                            usdc_contract
+                                .version()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_version",
+                                    otel.kind = "client",
+                                )),
+                            usdc_contract
+                                .version()
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_version",
+                                    otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
+                    }
+                    Erc3009Contract::Xbnb(xbnb_contract) => {
+                        let domain = call_with_fallback(
+                            xbnb_contract
+                                .eip712Domain()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                            xbnb_contract
+                                .eip712Domain()
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                        domain.version // version field from the eip712Domain response
+                    }
+                };
+                // Store in cache for future requests
+                cache.write().await.insert(*asset_address, (fetched_version.clone(), std::time::Instant::now()));
+                tracing::debug!(token = %asset_address, version = %fetched_version, "cached EIP-712 version");
+                fetched_version
             }
-            Erc3009Contract::Xbnb(xbnb_contract) => {
-                let domain = call_with_fallback(
-                    xbnb_contract
-                        .eip712Domain()
-                        .call()
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_eip712_domain",
-                            otel.kind = "client",
-                        )),
-                    xbnb_contract
-                        .eip712Domain()
-                        .call()
-                        .block(BlockId::Number(BlockNumberOrTag::Latest))
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_eip712_domain",
-                            otel.kind = "client",
-                        )),
-                )
-                .await
-                .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
-                domain.version // version field from the eip712Domain response
+        } else {
+            // No cache provided - fetch directly (legacy behavior)
+            match token_contract {
+                Erc3009Contract::Usdc(usdc_contract) => {
+                    call_with_fallback(
+                        usdc_contract
+                            .version()
+                            .call()
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_version",
+                                otel.kind = "client",
+                            )),
+                        usdc_contract
+                            .version()
+                            .call()
+                            .block(BlockId::Number(BlockNumberOrTag::Latest))
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_version",
+                                otel.kind = "client",
+                            )),
+                    )
+                    .await
+                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
+                }
+                Erc3009Contract::Xbnb(xbnb_contract) => {
+                    let domain = call_with_fallback(
+                        xbnb_contract
+                            .eip712Domain()
+                            .call()
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_domain",
+                                otel.kind = "client",
+                            )),
+                        xbnb_contract
+                            .eip712Domain()
+                            .call()
+                            .block(BlockId::Number(BlockNumberOrTag::Latest))
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_domain",
+                                otel.kind = "client",
+                            )),
+                    )
+                    .await
+                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                    domain.version // version field from the eip712Domain response
+                }
             }
         }
     };
@@ -1789,6 +1932,8 @@ async fn assert_valid_payment<P: Provider + Clone>(
     chain: &EvmChain,
     payload: &PaymentPayload,
     requirements: &PaymentRequirements,
+    version_cache: Option<&Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>>,
+    skip_balance_check: bool,
 ) -> Result<(Erc3009Contract<P>, ExactEvmPayment, Eip712Domain), FacilitatorLocalError> {
     let payment_payload = match &payload.payload {
         ExactPaymentPayload::Evm(payload) => payload,
@@ -1855,15 +2000,17 @@ async fn assert_valid_payment<P: Provider + Clone>(
         }
     };
 
-    let domain = assert_domain(chain, &contract, payload, &asset_address, requirements).await?;
+    let domain = assert_domain(chain, &contract, payload, &asset_address, requirements, version_cache).await?;
 
     let amount_required = requirements.max_amount_required.0;
-    assert_enough_balance(
-        &contract,
-        &payment_payload.authorization.from,
-        amount_required,
-    )
-    .await?;
+    if !skip_balance_check {
+        assert_enough_balance(
+            &contract,
+            &payment_payload.authorization.from,
+            amount_required,
+        )
+        .await?;
+    }
     let value: U256 = payment_payload.authorization.value.into();
     assert_enough_value(&payer, &value, &amount_required)?;
 
