@@ -168,15 +168,15 @@ rpc_request_timeout_seconds = 20
 # for each blockchain network (e.g., different batch sizes for Base vs BSC)
 [batch_settlement]
 # Enable batching globally (default: false for backward compatibility)
-enabled = false
+enabled = true
 
 # Global default: Maximum settlements per batch (default: 150)
 # Theoretical max ~545 based on gas limit, but 150 is safer
-max_batch_size = 150
+max_batch_size = 100
 
 # Global default: Maximum milliseconds to wait before flushing batch (default: 500)
 # Lower = better latency, higher = better batching efficiency
-max_wait_ms = 500
+max_wait_ms = 1000
 
 # Global default: Minimum batch size for immediate flush (default: 10)
 # If queue reaches this size, flush immediately without waiting
@@ -205,11 +205,11 @@ allow_partial_failure = false
 # allow_partial_failure = true
 
 # Example: Enable batching ONLY for BSC testnet (global disabled, per-network enabled)
-[batch_settlement.networks.bsc-testnet]
-enabled = true
-max_batch_size = 100
-max_wait_ms = 1000
-allow_partial_failure = false
+# [batch_settlement.networks.bsc-testnet]
+# enabled = true
+# max_batch_size = 100
+# max_wait_ms = 1000
+# allow_partial_failure = false
 
 # Example: Disable batching for a specific network (global enabled, per-network disabled)
 # [batch_settlement.networks.base]
