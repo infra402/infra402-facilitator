@@ -127,7 +127,6 @@ Options:
   --total-requests <N>           Send N total requests (conflicts with duration)
   --verify-only                  Only test /verify endpoint
   --settle-only                  Only test /settle endpoint
-  --verify-ratio <0.0-1.0>       Ratio of verify vs settle [default: 0.5]
   --workers <N>                  Number of concurrent workers [default: 10]
   --stats-interval-seconds <N>   Print stats every N seconds [default: 1]
 ```
@@ -186,15 +185,6 @@ cargo run --release -- \
   --settle-only \
   --requests-per-second 100 \
   --duration-seconds 60
-```
-
-### Custom Mix: 80% verify, 20% settle
-
-```bash
-cargo run --release -- \
-  --verify-ratio 0.8 \
-  --requests-per-second 100 \
-  --duration-seconds 30
 ```
 
 ### Maximum Throughput Test (unlimited RPS)
