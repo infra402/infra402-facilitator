@@ -12,8 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use x402_reqwest::chains::evm::EvmSenderWallet;
 use x402_reqwest::chains::SenderWallet;
-use x402_reqwest::X402PaymentsError;
-use x402_rs::types::{EvmAddress, MixedAddress, PaymentPayload, PaymentRequirements, Scheme, TokenAmount, VerifyResponse};
+use x402_rs::types::{EvmAddress, MixedAddress, PaymentRequirements, Scheme, TokenAmount, VerifyResponse};
 
 pub struct StressTest {
     config: Config,
@@ -148,7 +147,7 @@ impl StressTest {
 }
 
 async fn worker_loop(
-    worker_id: usize,
+    _worker_id: usize,
     config: Config,
     client: FacilitatorClient,
     sender_wallet: EvmSenderWallet,

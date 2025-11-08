@@ -1,7 +1,6 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use x402_rs::types::FacilitatorErrorReason;
 
 #[derive(Debug, Clone)]
 pub enum RequestType {
@@ -23,6 +22,7 @@ pub struct RequestRecord {
     pub request_type: RequestType,
     pub outcome: RequestOutcome,
     pub latency_ms: u64,
+    #[allow(dead_code)]
     pub timestamp: DateTime<Utc>,
 }
 

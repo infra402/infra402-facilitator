@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use x402_rs::types::{
     PaymentPayload, PaymentRequirements, SettleResponse, VerifyRequest, VerifyResponse,
 };
