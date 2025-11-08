@@ -359,14 +359,6 @@ impl IntoResponse for FacilitatorLocalError {
     fn into_response(self) -> Response {
         let error = self;
 
-        let bad_request = (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Invalid request".to_string(),
-            }),
-        )
-            .into_response();
-
         match error {
             FacilitatorLocalError::SchemeMismatch(payer, ..) => {
                 (StatusCode::OK, Json(invalid_schema(payer))).into_response()
@@ -386,9 +378,6 @@ impl IntoResponse for FacilitatorLocalError {
                 )),
             )
                 .into_response(),
-            FacilitatorLocalError::ContractCall(..)
-            | FacilitatorLocalError::InvalidAddress(..)
-            | FacilitatorLocalError::ClockError(_) => bad_request,
             FacilitatorLocalError::DecodingError(reason) => (
                 StatusCode::OK,
                 Json(VerifyResponse::invalid(
@@ -405,6 +394,55 @@ impl IntoResponse for FacilitatorLocalError {
                 )),
             )
                 .into_response(),
+            // Client errors (4xx) - invalid input from user
+            FacilitatorLocalError::InvalidAddress(..) => (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Invalid address format".to_string(),
+                }),
+            )
+                .into_response(),
+            // Server errors (5xx) - internal/infrastructure issues
+            FacilitatorLocalError::ContractCall(details) => {
+                tracing::error!("Contract call failed: {details}");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ErrorResponse {
+                        error: "Blockchain network error".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+            FacilitatorLocalError::RpcProviderError(details) => {
+                tracing::error!("RPC provider error: {details}");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: "Service temporarily unavailable".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+            FacilitatorLocalError::ResourceExhaustion(details) => {
+                tracing::error!("Resource exhaustion: {details}");
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: "Service temporarily unavailable".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
+            FacilitatorLocalError::ClockError(details) => {
+                tracing::error!("System clock error: {:?}", details);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "Internal server error".to_string(),
+                    }),
+                )
+                    .into_response()
+            }
         }
     }
 }

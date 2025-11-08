@@ -36,6 +36,7 @@ pub struct RateLimiterConfig {
     pub requests_per_second: u32,
     pub ban_duration: Duration,
     pub ban_threshold: u32,
+    pub whitelisted_ips: Vec<ipnetwork::IpNetwork>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +68,14 @@ impl RateLimiter {
                 return next.run(req).await;
             }
         };
+
+        // Check if IP is whitelisted
+        if self.is_whitelisted(&ip) {
+            if self.config_log_enabled() {
+                tracing::trace!(ip = %ip, "Request bypassing rate limit: IP is whitelisted");
+            }
+            return next.run(req).await;
+        }
 
         // Check if IP is banned
         if self.is_banned(&ip) {
@@ -119,6 +128,13 @@ impl RateLimiter {
             }
         }
         false
+    }
+
+    fn is_whitelisted(&self, ip: &IpAddr) -> bool {
+        self.config
+            .whitelisted_ips
+            .iter()
+            .any(|network| network.contains(*ip))
     }
 
     fn should_rate_limit(&self, ip: &IpAddr) -> bool {
@@ -232,6 +248,7 @@ mod tests {
             requests_per_second: 10,
             ban_duration: Duration::from_secs(300),
             ban_threshold: 5,
+            whitelisted_ips: vec![],
         };
         let limiter = RateLimiter::new(config);
         assert!(limiter.config.enabled);
@@ -244,6 +261,7 @@ mod tests {
             requests_per_second: 10,
             ban_duration: Duration::from_secs(300),
             ban_threshold: 3,
+            whitelisted_ips: vec![],
         };
         let limiter = RateLimiter::new(config);
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
@@ -264,6 +282,7 @@ mod tests {
             requests_per_second: 10,
             ban_duration: Duration::from_millis(100),
             ban_threshold: 1,
+            whitelisted_ips: vec![],
         };
         let limiter = RateLimiter::new(config);
         let ip: IpAddr = "192.168.1.1".parse().unwrap();

@@ -79,6 +79,9 @@ pub struct RateLimitingConfig {
     /// Per-endpoint rate limit overrides.
     #[serde(default)]
     pub endpoints: HashMap<String, u32>,
+    /// IPs exempt from rate limiting (e.g., localhost, trusted services).
+    #[serde(with = "ip_list_serde")]
+    pub whitelisted_ips: Vec<IpNetwork>,
 }
 
 impl Default for RateLimitingConfig {
@@ -89,8 +92,19 @@ impl Default for RateLimitingConfig {
             ban_duration_seconds: 300, // 5 minutes
             ban_threshold: 5,
             endpoints: HashMap::new(),
+            whitelisted_ips: default_local_whitelist(),
         }
     }
+}
+
+/// Default whitelist includes local IP ranges for development/testing.
+fn default_local_whitelist() -> Vec<IpNetwork> {
+    use std::str::FromStr;
+    vec![
+        IpNetwork::from_str("127.0.0.0/8").unwrap(),   // IPv4 localhost
+        IpNetwork::from_str("::1/128").unwrap(),        // IPv6 localhost
+        IpNetwork::from_str("::ffff:127.0.0.0/104").unwrap(), // IPv4-mapped IPv6 localhost
+    ]
 }
 
 /// CORS configuration.
@@ -202,6 +216,18 @@ pub struct TransactionConfig {
     /// Default: 30 seconds.
     pub default_rpc_timeout_seconds: u64,
 
+    /// HTTP connection establishment timeout in seconds.
+    /// Default: 10 seconds.
+    pub connection_timeout_seconds: u64,
+
+    /// Maximum idle connections per host in the connection pool.
+    /// Default: 100 connections.
+    pub pool_max_idle_per_host: usize,
+
+    /// How long to keep idle connections alive in seconds.
+    /// Default: 90 seconds.
+    pub pool_idle_timeout_seconds: u64,
+
     /// Per-chain configuration overrides.
     /// Key is the network name (e.g., "bsc", "ethereum", "base").
     /// Each chain should specify its block_time_seconds, receipt_timeout_blocks, and rpc_request_timeout_seconds.
@@ -214,6 +240,9 @@ impl Default for TransactionConfig {
     fn default() -> Self {
         Self {
             default_rpc_timeout_seconds: 30, // 30 seconds
+            connection_timeout_seconds: 10, // 10 seconds
+            pool_max_idle_per_host: 100, // 100 connections
+            pool_idle_timeout_seconds: 90, // 90 seconds
             chains: HashMap::new(),
         }
     }

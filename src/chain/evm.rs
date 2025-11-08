@@ -247,16 +247,66 @@ impl EvmProvider {
         // Parse RPC URL for HTTP client configuration
         let url = rpc_url
             .parse::<url::Url>()
-            .map_err(|e| format!("Invalid RPC URL {rpc_url}: {e}"))?;
+            .map_err(|e| {
+                let error_str = format!("{:?}", e);
+                if error_str.contains("failed to lookup address") {
+                    tracing::error!("DNS lookup failed for {rpc_url}: {e:?}");
+                    FacilitatorLocalError::RpcProviderError(
+                        format!("DNS resolution failed for {rpc_url}")
+                    )
+                } else {
+                    tracing::error!("Invalid RPC URL {rpc_url}: {e:?}");
+                    FacilitatorLocalError::RpcProviderError(
+                        format!("Invalid RPC URL: {rpc_url}")
+                    )
+                }
+            })?;
+
+        // Get connection pool configuration from config or use defaults
+        let connection_timeout_secs = config
+            .as_ref()
+            .map(|c| c.transaction.connection_timeout_seconds)
+            .unwrap_or(10);
+        let pool_max_idle = config
+            .as_ref()
+            .map(|c| c.transaction.pool_max_idle_per_host)
+            .unwrap_or(100);
+        let pool_idle_timeout_secs = config
+            .as_ref()
+            .map(|c| c.transaction.pool_idle_timeout_seconds)
+            .unwrap_or(90);
+
+        tracing::debug!(
+            connection_timeout_secs,
+            pool_max_idle,
+            pool_idle_timeout_secs,
+            "Configuring HTTP connection pool"
+        );
 
         // Build custom HTTP client with configured timeouts
         let http_client = alloy::transports::http::reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10)) // Connection establishment timeout
-            .timeout(rpc_timeout) // Total request timeout
-            .pool_idle_timeout(Duration::from_secs(90)) // Keep-alive timeout
-            .pool_max_idle_per_host(10) // Connection pool size
+            .connect_timeout(Duration::from_secs(connection_timeout_secs))
+            .timeout(rpc_timeout)
+            .pool_idle_timeout(Duration::from_secs(pool_idle_timeout_secs))
+            .pool_max_idle_per_host(pool_max_idle)
             .build()
-            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+            .map_err(|e| {
+                let error_str = format!("{:?}", e);
+                if error_str.contains("Too many open files") || error_str.contains("EMFILE") {
+                    tracing::error!(
+                        "File descriptor limit reached (pool_max_idle_per_host={}): {e:?}",
+                        pool_max_idle
+                    );
+                    FacilitatorLocalError::ResourceExhaustion(
+                        "File descriptor limit reached".to_string()
+                    )
+                } else {
+                    tracing::error!("HTTP client build failed: {e:?}");
+                    FacilitatorLocalError::RpcProviderError(
+                        format!("HTTP client initialization failed: {e}")
+                    )
+                }
+            })?;
 
         // Create RPC client with custom HTTP client
         let client = RpcClient::builder()
@@ -608,16 +658,16 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        .map_err(|e| categorize_transport_error(e, "signature validation multicall"))?;
                         let is_valid_signature_result = is_valid_signature_result
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                            .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
                         if !is_valid_signature_result {
                             return Err(FacilitatorLocalError::InvalidSignature(
                                 payer.into(),
                                 "Incorrect signature".to_string(),
                             ));
                         }
-                        transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
                     TransferWithAuthorizationCallBuilder::Xbnb(tx) => {
                         let (is_valid_signature_result, transfer_result) = call_with_fallback(
@@ -658,16 +708,16 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                        .map_err(|e| categorize_transport_error(e, "signature validation multicall"))?;
                         let is_valid_signature_result = is_valid_signature_result
-                            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                            .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
                         if !is_valid_signature_result {
                             return Err(FacilitatorLocalError::InvalidSignature(
                                 payer.into(),
                                 "Incorrect signature".to_string(),
                             ));
                         }
-                        transfer_result.map_err(|e| FacilitatorLocalError::ContractCall(format!("{e}")))?;
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
                 }
                 // Drop contract to release provider clone after multicall completes
@@ -1495,7 +1545,7 @@ async fn assert_enough_balance<P: Provider>(
                     )),
             )
             .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            .map_err(|e| categorize_transport_error(e, "balance query"))?
         }
         Erc3009Contract::Xbnb(xbnb_contract) => {
             call_with_fallback(
@@ -1522,7 +1572,7 @@ async fn assert_enough_balance<P: Provider>(
                     )),
             )
             .await
-            .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+            .map_err(|e| categorize_transport_error(e, "balance query"))?
         }
     };
 
@@ -1588,9 +1638,9 @@ async fn is_contract_deployed<P: Provider>(
                     otel.kind = "client",
                 ))
                 .await
-                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+                .map_err(|e| categorize_transport_error(e, "get_code_at"))?
         }
-        Err(e) => return Err(FacilitatorLocalError::ContractCall(format!("{e:?}"))),
+        Err(e) => return Err(categorize_transport_error(e, "get_code_at")),
     };
     Ok(!bytes.is_empty())
 }
@@ -1657,7 +1707,7 @@ async fn assert_domain<P: Provider>(
                         )),
                 )
                 .await
-                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?
+                .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
             }
             Erc3009Contract::Xbnb(xbnb_contract) => {
                 let domain = call_with_fallback(
@@ -1680,7 +1730,7 @@ async fn assert_domain<P: Provider>(
                         )),
                 )
                 .await
-                .map_err(|e| FacilitatorLocalError::ContractCall(format!("{e:?}")))?;
+                .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
                 domain.version // version field from the eip712Domain response
             }
         }
@@ -1740,7 +1790,9 @@ async fn assert_valid_payment<P: Provider + Clone>(
         .pay_to
         .clone()
         .try_into()
-        .map_err(|e| FacilitatorLocalError::InvalidAddress(format!("{e:?}")))?;
+        .map_err(|_| FacilitatorLocalError::InvalidAddress(
+            "Invalid Ethereum address format".to_string()
+        ))?;
     if payload_to != requirements_to {
         return Err(FacilitatorLocalError::ReceiverMismatch(
             payer.into(),
@@ -1755,7 +1807,9 @@ async fn assert_valid_payment<P: Provider + Clone>(
         .asset
         .clone()
         .try_into()
-        .map_err(|e| FacilitatorLocalError::InvalidAddress(format!("{e:?}")))?;
+        .map_err(|_| FacilitatorLocalError::InvalidAddress(
+            "Invalid Ethereum address format".to_string()
+        ))?;
 
     // Determine token type based on network
     // BSC networks use XBNB, other networks use USDC
@@ -2116,5 +2170,37 @@ impl NonceManager for PendingNonceManager {
         *nonce = new_nonce;
         tracing::debug!(%address, allocated_nonce = new_nonce, "nonce allocated and stored");
         Ok(new_nonce)
+    }
+}
+
+/// Categorize transport/RPC errors for appropriate HTTP status mapping.
+///
+/// Distinguishes between:
+/// - Network/connection errors (DNS, TCP, timeouts) -> RpcProviderError (503)
+/// - Resource exhaustion (file descriptors, pool) -> ResourceExhaustion (503)
+/// - Contract execution errors -> ContractCall (502)
+fn categorize_transport_error(e: impl std::fmt::Debug, context: &str) -> FacilitatorLocalError {
+    let err_str = format!("{:?}", e);
+
+    if err_str.contains("Connection refused") ||
+       err_str.contains("Connection reset") ||
+       err_str.contains("No route to host") ||
+       err_str.contains("timeout") ||
+       err_str.contains("Timeout") ||
+       err_str.contains("dns error") {
+        tracing::error!("{context}: RPC connection error: {err_str}");
+        FacilitatorLocalError::RpcProviderError(
+            format!("{context}: Connection error")
+        )
+    } else if err_str.contains("Too many open files") || err_str.contains("EMFILE") {
+        tracing::error!("{context}: File descriptor exhaustion: {err_str}");
+        FacilitatorLocalError::ResourceExhaustion(
+            "Connection pool exhausted".to_string()
+        )
+    } else {
+        tracing::error!("{context}: Contract call failed: {err_str}");
+        FacilitatorLocalError::ContractCall(
+            format!("{context}: Call failed")
+        )
     }
 }

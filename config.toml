@@ -27,6 +27,15 @@ ban_duration_seconds = 600
 # Default: 5 violations
 ban_threshold = 5
 
+# IPs exempt from rate limiting (localhost by default)
+# Local IP ranges are included by default for development/testing
+whitelisted_ips = [
+    "127.0.0.0/8",      # IPv4 localhost
+    "::1/128",          # IPv6 localhost
+    # Add trusted IPs here:
+    # "10.0.0.0/8",     # Example: Internal network
+]
+
 # Per-endpoint rate limit overrides (optional)
 # Specify custom limits for specific endpoints
 [rate_limiting.endpoints]
@@ -102,6 +111,12 @@ cleanup_interval_seconds = 3600
 # This is used as a fallback when chain-specific configuration is not provided
 # Default: 30 seconds
 default_rpc_timeout_seconds = 30
+
+# HTTP connection pool settings
+# Increase these values for high-concurrency scenarios (100+ RPS)
+connection_timeout_seconds = 10      # Connection establishment timeout
+pool_max_idle_per_host = 100         # Max idle connections per RPC host
+pool_idle_timeout_seconds = 90       # Keep-alive timeout for idle connections
 
 # Chain-specific configurations
 # Format: [transaction.chains.<network-name>]

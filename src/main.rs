@@ -153,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         requests_per_second: app_config.rate_limiting.requests_per_second,
         ban_duration: std::time::Duration::from_secs(app_config.rate_limiting.ban_duration_seconds),
         ban_threshold: app_config.rate_limiting.ban_threshold,
+        whitelisted_ips: app_config.rate_limiting.whitelisted_ips.clone(),
     });
     let abuse_detector = AbuseDetector::new(AbuseDetectorConfig {
         enabled: app_config.security.log_security_events,

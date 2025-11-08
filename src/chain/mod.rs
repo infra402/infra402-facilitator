@@ -112,6 +112,12 @@ pub enum FacilitatorLocalError {
     /// Low-level contract interaction failure (e.g. call failed, method not found).
     #[error("Invalid contract call: {0}")]
     ContractCall(String),
+    /// RPC provider connection/network error (DNS, TCP, timeout).
+    #[error("RPC provider error: {0}")]
+    RpcProviderError(String),
+    /// Resource exhaustion (file descriptors, connection pool).
+    #[error("Resource exhaustion: {0}")]
+    ResourceExhaustion(String),
     /// EIP-712 signature is invalid or mismatched.
     #[error("Invalid signature: {1}")]
     InvalidSignature(MixedAddress, String),
