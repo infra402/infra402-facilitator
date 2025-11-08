@@ -15,13 +15,13 @@ x402-reqwest = { path = "../x402-reqwest" }
 x402-rs = { version = "0.9" }
 
 # Alloy for EVM types and signing
-alloy = { version = "1.0.12", features = ["signers"] }
+alloy = { version = "1.1.0", features = ["signers"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12.23", features = ["json"] }
 
 # Async runtime
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
 
 # CLI and configuration
 clap = { version = "4.5", features = ["derive", "env"] }
@@ -29,7 +29,7 @@ dotenvy = { version = "0.15" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.143"
 
 # Progress and terminal UI
 indicatif = { version = "0.17", features = ["tokio"] }

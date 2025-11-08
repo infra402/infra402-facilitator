@@ -13,12 +13,12 @@ keywords = ["blockchain", "payments", "x402", "stablecoin", "http-402", "infrast
 categories = ["cryptography", "finance", "network-programming", "web-programming::http-server"]
 
 [dependencies]
-axum = { version = "0.8.4" }
-tokio = { version = "1.45.0", features = ["full"] }
+axum = { version = "0.8.6" }
+tokio = { version = "1.48.0", features = ["full"] }
 tokio-util = { version = "0.7.16", features = ["rt"] }
 dotenvy = { version = "0.15.7" }
-serde_json = { version = "1.0.140" }
-tower-http = { version = "0.6.3", features = ["trace", "cors", "limit"] }
+serde_json = { version = "1.0.143" }
+tower-http = { version = "0.6.6", features = ["trace", "cors", "limit"] }
 tower = { version = "0.5.2" }
 serde = { version = "1.0.219", features = ["derive"] }
 once_cell = { version = "1.21.3" }

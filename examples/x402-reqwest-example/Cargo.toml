@@ -5,11 +5,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
-x402-reqwest = { version = "0.4" }
-x402-rs = { version = "0.9" }
-alloy = { version = "1.0.12" }
-reqwest = { version = "0.12.20" }
-tokio = { version = "1.45.1" }
+x402-reqwest = { path = "../../crates/x402-reqwest" }
+infra402-facilitator = { path = "../.." }
+alloy = { version = "1.1.0" }
+reqwest = { version = "0.12.23" }
+tokio = { version = "1.48.0" }
 dotenvy = { version = "0.15.7" }
 solana-sdk = { version = "2.3.1", features = ["full"] }
 spl-token = { version = "8.0.0" , features = ["no-entrypoint"] }
