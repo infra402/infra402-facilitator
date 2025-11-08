@@ -5,15 +5,16 @@ use alloy::signers::Signer;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::{SolStruct, eip712_domain};
 use async_trait::async_trait;
-use rand::{Rng, rng};
-use std::sync::Arc;
-use x402_rs::chain::evm::EvmChain;
-use x402_rs::network::NetworkFamily;
-use x402_rs::timestamp::UnixTimestamp;
-use x402_rs::types::{
+use infra402_facilitator::chain::evm::EvmChain;
+use infra402_facilitator::network::NetworkFamily;
+use infra402_facilitator::timestamp::UnixTimestamp;
+use infra402_facilitator::types::{
     EvmSignature, ExactEvmPayload, ExactEvmPayloadAuthorization, ExactPaymentPayload,
     HexEncodedNonce, PaymentPayload, PaymentRequirements, Scheme, TransferWithAuthorization,
+    X402Version,
 };
+use rand::{Rng, rng};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct EvmSenderWallet {
@@ -123,7 +124,7 @@ impl SenderWallet for EvmSenderWallet {
         #[cfg(feature = "telemetry")]
         tracing::debug!(?signature, "Signature obtained");
         let payment_payload = PaymentPayload {
-            x402_version: x402_rs::types::X402Version::V1,
+            x402_version: X402Version::V1,
             scheme: Scheme::Exact,
             network,
             payload: ExactPaymentPayload::Evm(ExactEvmPayload {

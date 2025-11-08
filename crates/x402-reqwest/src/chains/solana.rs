@@ -12,9 +12,9 @@ use solana_sdk::transaction::VersionedTransaction;
 use spl_associated_token_account::instruction::create_associated_token_account_idempotent;
 use std::str::FromStr;
 use std::sync::Arc;
-use x402_rs::chain::solana::{SolanaAddress, TransactionInt};
-use x402_rs::network::NetworkFamily;
-use x402_rs::types::{
+use infra402_facilitator::chain::solana::{SolanaAddress, TransactionInt};
+use infra402_facilitator::network::NetworkFamily;
+use infra402_facilitator::types::{
     ExactPaymentPayload, ExactSolanaPayload, PaymentPayload, PaymentRequirements, X402Version,
 };
 

@@ -23,7 +23,7 @@
 //! ```rust,no_run
 //! use alloy::signers::local::PrivateKeySigner;
 //! use x402_reqwest::{MaxTokenAmountFromAmount, X402Payments};
-//! use x402_rs::network::{Network, USDCDeployment};
+//! use infra402_facilitator::network::{Network, USDCDeployment};
 //!
 //! let signer: PrivateKeySigner = "0x...".parse()?;
 //! X402Payments::with_signer(signer)
@@ -39,7 +39,7 @@
 //! use reqwest::ClientBuilder;
 //! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, MaxTokenAmountFromAmount};
 //! use alloy::signers::local::PrivateKeySigner;
-//! use x402_rs::network::{Network, USDCDeployment};
+//! use infra402_facilitator::network::{Network, USDCDeployment};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -64,7 +64,7 @@
 //! use reqwest::Client;
 //! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, MaxTokenAmountFromAmount};
 //! use alloy::signers::local::PrivateKeySigner;
-//! use x402_rs::network::{Network, USDCDeployment};
+//! use infra402_facilitator::network::{Network, USDCDeployment};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -90,7 +90,7 @@
 //! use reqwest::Client;
 //! use reqwest_middleware as rqm;
 //! use x402_reqwest::{MaxTokenAmountFromAmount, X402Payments};
-//! use x402_rs::network::{Network, USDCDeployment};
+//! use infra402_facilitator::network::{Network, USDCDeployment};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

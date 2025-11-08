@@ -9,20 +9,19 @@
 //! - EIP-712-based payload construction and signing
 //! - Base64 encoding into a payment header
 
+use crate::chains::{IntoSenderWallet, SenderWallet};
 use http::{Extensions, HeaderValue, StatusCode};
+use infra402_facilitator::network::{Network, USDCDeployment};
+use infra402_facilitator::types::{
+    Base64Bytes, MixedAddressError, MoneyAmount, MoneyAmountParseError, PaymentPayload,
+    PaymentRequiredResponse, PaymentRequirements, TokenAmount, TokenAsset, TokenDeployment,
+};
 use reqwest::{Request, Response};
 use reqwest_middleware as rqm;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTimeError;
 use tracing::instrument;
-use x402_rs::network::{Network, USDCDeployment};
-use x402_rs::types::{
-    Base64Bytes, MixedAddressError, MoneyAmount, MoneyAmountParseError, PaymentPayload,
-    PaymentRequiredResponse, PaymentRequirements, TokenAmount, TokenAsset, TokenDeployment,
-};
-
-use crate::chains::{IntoSenderWallet, SenderWallet};
 
 /// Represents the maximum allowed amount for a specific token asset.
 pub struct MaxTokenAmount {

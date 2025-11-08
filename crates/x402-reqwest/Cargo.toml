@@ -13,7 +13,7 @@ categories = ["web-programming::http-client", "authentication", "cryptography", 
 readme = "README.md"
 
 [dependencies]
-x402-rs = { version = "0.9", default-features = false }
+infra402-facilitator = { path = "../..", default-features = false }
 reqwest = { version = "0.12.20" }
 http = { version = "1.3.1" }
 reqwest-middleware = { version = "0.4.2" }
@@ -35,4 +35,4 @@ bincode = { version = "1.3.3" } # Older version due to compatibility with solana
 tracing = { version = "0.1.41" }
 
 [features]
-telemetry = ["x402-rs/telemetry"]
+telemetry = ["infra402-facilitator/telemetry"]

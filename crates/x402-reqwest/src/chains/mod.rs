@@ -1,7 +1,6 @@
-use std::sync::Arc;
-use x402_rs::types::{PaymentPayload, PaymentRequirements};
-
 use crate::X402PaymentsError;
+use infra402_facilitator::types::{PaymentPayload, PaymentRequirements};
+use std::sync::Arc;
 
 pub mod evm;
 pub mod solana;

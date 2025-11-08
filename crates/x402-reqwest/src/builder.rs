@@ -17,13 +17,12 @@
 //!     .build();
 //! ```
 
+use crate::chains::IntoSenderWallet;
+use crate::{MaxTokenAmount, X402Payments};
+use infra402_facilitator::types::TokenAsset;
 use reqwest::{Client, ClientBuilder};
 use reqwest_middleware as rqm;
 use reqwest_middleware::ClientWithMiddleware;
-use x402_rs::types::TokenAsset;
-
-use crate::chains::IntoSenderWallet;
-use crate::{MaxTokenAmount, X402Payments};
 
 /// Builder for attaching `X402Payments` middleware to a `reqwest` client or builder.
 ///

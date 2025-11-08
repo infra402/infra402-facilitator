@@ -1,12 +1,12 @@
 use alloy::signers::local::PrivateKeySigner;
 use dotenvy::dotenv;
+use infra402_facilitator::network::{Network, USDCDeployment};
 use reqwest::Client;
 use solana_sdk::signature::Keypair;
 use std::env;
 use x402_reqwest::chains::evm::EvmSenderWallet;
 use x402_reqwest::chains::solana::SolanaSenderWallet;
 use x402_reqwest::{MaxTokenAmountFromAmount, ReqwestWithPayments, ReqwestWithPaymentsBuild};
-use x402_rs::network::{Network, USDCDeployment};
 
 async fn buy_evm() -> Result<(), Box<dyn std::error::Error>> {
     let signer: PrivateKeySigner = env::var("EVM_PRIVATE_KEY")?.parse()?;
