@@ -10,7 +10,7 @@ use crate::types::{SettleRequest, SettleResponse};
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::{Duration, interval};
 
@@ -39,7 +39,8 @@ impl BatchQueueManager {
     /// Enqueues a settlement request to the appropriate queue.
     ///
     /// The queue is selected based on the (facilitator_address, network) pair.
-    /// If no queue exists for this pair, one is created and a background processor is spawned.
+    /// If no queue exists for this pair, one is created. A background processor task
+    /// is spawned if one is not already running for this queue.
     ///
     /// The caller must ensure the network is supported before calling this method.
     pub async fn enqueue(
@@ -49,12 +50,8 @@ impl BatchQueueManager {
         network_provider: &Arc<crate::chain::NetworkProvider>,
         request: SettleRequest,
     ) -> oneshot::Receiver<Result<SettleResponse, FacilitatorLocalError>> {
-        // Clone the provider Arc for use in the closure
-        let provider_arc_clone = Arc::clone(network_provider);
-
-        // Capture key and queues map for cleanup after process_loop exits
+        // Capture key for cleanup after process_loop exits
         let key = (facilitator_addr, network);
-        let queues_map_clone = Arc::clone(&self.queues);
 
         // Get or create queue for this (facilitator, network) pair
         let queue = self
@@ -64,7 +61,7 @@ impl BatchQueueManager {
                 // Resolve per-network configuration
                 let network_config = self.config.for_network(&network.to_string());
 
-                tracing::info!(
+                tracing::debug!(
                     %facilitator_addr,
                     %network,
                     max_batch_size = network_config.max_batch_size,
@@ -74,39 +71,58 @@ impl BatchQueueManager {
                     "creating new batch queue for facilitator+network pair"
                 );
 
-                let queue = Arc::new(BatchQueue::new(
+                Arc::new(BatchQueue::new(
                     network_config.max_batch_size,
                     network_config.max_wait_ms,
                     network_config.min_batch_size,
                     facilitator_addr,
                     network,
-                ));
-
-                // Clone the provider Arc and queues map for the background task
-                // This ensures only the specific network's provider is held by the background task
-                let queue_clone = Arc::clone(&queue);
-                let provider_clone = Arc::clone(&provider_arc_clone);
-                let queues_map = Arc::clone(&queues_map_clone);
-                let allow_partial_failure = network_config.allow_partial_failure;
-
-                tokio::spawn(async move {
-                    queue_clone.process_loop(provider_clone, allow_partial_failure).await;
-
-                    // CLEANUP: Remove from DashMap when task exits to release provider Arc
-                    queues_map.remove(&key);
-                    tracing::info!(
-                        facilitator = %key.0,
-                        network = %key.1,
-                        "removed queue entry from DashMap after process_loop exit"
-                    );
-                });
-
-                queue
+                ))
             })
             .clone();
 
-        // Enqueue request
-        queue.enqueue(request).await
+        // Enqueue the request first
+        let rx = queue.enqueue(request).await;
+
+        // Check if we need to spawn a background processing task
+        // Use compare_exchange to atomically check and set the flag
+        if queue.task_running.compare_exchange(
+            false,
+            true,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ).is_ok() {
+            // We successfully set the flag from false to true, so we spawn the task
+            let queue_for_loop = Arc::clone(&queue);
+            let queue_for_cleanup = Arc::clone(&queue);
+            let provider_clone = Arc::clone(network_provider);
+            let queues_map = Arc::clone(&self.queues);
+            let network_config = self.config.for_network(&network.to_string());
+            let allow_partial_failure = network_config.allow_partial_failure;
+
+            tracing::info!(
+                %facilitator_addr,
+                %network,
+                "spawning background batch processor task"
+            );
+
+            tokio::spawn(async move {
+                queue_for_loop.process_loop(provider_clone, allow_partial_failure).await;
+
+                // Clear the task_running flag
+                queue_for_cleanup.task_running.store(false, Ordering::SeqCst);
+
+                // CLEANUP: Remove from DashMap when task exits to release provider Arc
+                queues_map.remove(&key);
+                tracing::info!(
+                    facilitator = %key.0,
+                    network = %key.1,
+                    "removed queue entry from DashMap after process_loop exit"
+                );
+            });
+        }
+
+        rx
     }
 
     /// Returns statistics about active queues.
@@ -138,6 +154,8 @@ pub struct BatchQueue {
     facilitator_addr: Address,
     /// Network for this queue
     network: Network,
+    /// Flag indicating whether a background processing task is currently running
+    task_running: Arc<AtomicBool>,
 }
 
 impl BatchQueue {
@@ -156,6 +174,7 @@ impl BatchQueue {
             min_batch_size,
             facilitator_addr,
             network,
+            task_running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -181,62 +200,42 @@ impl BatchQueue {
 
     /// Run the batch processing loop for this queue.
     ///
-    /// Periodically flushes batches when either max_wait_ms elapses or max_batch_size is reached.
-    /// Exits after 30 seconds of inactivity to allow provider references to be dropped.
+    /// Waits for max_wait_ms, then flushes any pending requests and exits.
+    /// This ensures the provider Arc is only held during active batch processing.
+    /// A new task will be spawned by the next enqueue() call if needed.
     pub async fn process_loop(
         self: Arc<Self>,
         network_provider: Arc<crate::chain::NetworkProvider>,
         allow_partial_failure: bool,
     ) {
-        const IDLE_TIMEOUT_SECS: u64 = 30;
-
-        let mut ticker = interval(Duration::from_millis(self.max_wait_ms));
-        let mut last_batch_time = Instant::now();
-
-        tracing::info!(
+        tracing::debug!(
             facilitator = %self.facilitator_addr,
             network = %self.network,
             max_batch_size = self.max_batch_size,
             max_wait_ms = self.max_wait_ms,
             min_batch_size = self.min_batch_size,
-            idle_timeout_secs = IDLE_TIMEOUT_SECS,
-            "batch processor started for queue"
+            "batch processor task started"
         );
 
-        loop {
-            ticker.tick().await;
+        // Wait for max_wait_ms to allow requests to accumulate
+        let mut ticker = interval(Duration::from_millis(self.max_wait_ms));
+        ticker.tick().await; // First tick completes immediately
+        ticker.tick().await; // Second tick waits for max_wait_ms
 
-            // Check if queue is empty
-            let is_empty = self.pending.lock().await.is_empty();
-
-            // Exit if idle timeout exceeded
-            if is_empty && last_batch_time.elapsed().as_secs() >= IDLE_TIMEOUT_SECS {
-                tracing::info!(
-                    facilitator = %self.facilitator_addr,
-                    network = %self.network,
-                    idle_seconds = last_batch_time.elapsed().as_secs(),
-                    "batch processor exiting due to idle timeout"
-                );
-                break;
-            }
-
-            if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
-                tracing::error!(
-                    facilitator = %self.facilitator_addr,
-                    network = %self.network,
-                    error = ?e,
-                    "failed to flush batch"
-                );
-            } else if !is_empty {
-                // Reset idle timer when we process a non-empty batch
-                last_batch_time = Instant::now();
-            }
+        // Flush whatever we have accumulated
+        if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
+            tracing::error!(
+                facilitator = %self.facilitator_addr,
+                network = %self.network,
+                error = ?e,
+                "failed to flush batch"
+            );
         }
 
-        tracing::info!(
+        tracing::debug!(
             facilitator = %self.facilitator_addr,
             network = %self.network,
-            "batch processor stopped"
+            "batch processor task exiting - provider Arc will be dropped"
         );
     }
 
