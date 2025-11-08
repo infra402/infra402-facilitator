@@ -287,8 +287,8 @@ pub async fn post_settle(
             "enqueuing settlement request for batch processing"
         );
 
-        // Enqueue to batch queue manager
-        let rx = manager.enqueue(facilitator_addr, network, body.clone()).await;
+        // Enqueue to batch queue manager with network provider
+        let rx = manager.enqueue(facilitator_addr, network, network_provider, body.clone()).await;
 
         // Wait for batch processing to complete
         match rx.await {

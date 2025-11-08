@@ -132,7 +132,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let manager = Arc::new(crate::batch_queue::BatchQueueManager::new(
             app_config.batch_settlement.clone(),
-            Arc::clone(&axum_state),
         ));
 
         Some(manager)

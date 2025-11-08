@@ -5,9 +5,7 @@
 
 use crate::chain::FacilitatorLocalError;
 use crate::config::BatchSettlementConfig;
-use crate::facilitator_local::FacilitatorLocal;
 use crate::network::Network;
-use crate::provider_cache::{ProviderCache, ProviderMap};
 use crate::types::{SettleRequest, SettleResponse};
 use alloy::primitives::Address;
 use dashmap::DashMap;
@@ -27,17 +25,14 @@ pub struct BatchQueueManager {
     queues: Arc<DashMap<(Address, Network), Arc<BatchQueue>>>,
     /// Configuration for batch settlement
     config: BatchSettlementConfig,
-    /// Facilitator for looking up network providers
-    facilitator: Arc<FacilitatorLocal<ProviderCache>>,
 }
 
 impl BatchQueueManager {
-    /// Creates a new BatchQueueManager with the given configuration and facilitator.
-    pub fn new(config: BatchSettlementConfig, facilitator: Arc<FacilitatorLocal<ProviderCache>>) -> Self {
+    /// Creates a new BatchQueueManager with the given configuration.
+    pub fn new(config: BatchSettlementConfig) -> Self {
         Self {
             queues: Arc::new(DashMap::new()),
             config,
-            facilitator,
         }
     }
 
@@ -45,18 +40,17 @@ impl BatchQueueManager {
     ///
     /// The queue is selected based on the (facilitator_address, network) pair.
     /// If no queue exists for this pair, one is created and a background processor is spawned.
+    ///
+    /// The caller must ensure the network is supported before calling this method.
     pub async fn enqueue(
         &self,
         facilitator_addr: Address,
         network: Network,
+        network_provider: &Arc<crate::chain::NetworkProvider>,
         request: SettleRequest,
     ) -> oneshot::Receiver<Result<SettleResponse, FacilitatorLocalError>> {
-        // Check if network is supported
-        if self.facilitator.provider_map().by_network(network).is_none() {
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Err(FacilitatorLocalError::UnsupportedNetwork(None)));
-            return rx;
-        }
+        // Clone the provider Arc for use in the closure
+        let provider_arc_clone = Arc::clone(network_provider);
 
         // Get or create queue for this (facilitator, network) pair
         let queue = self
@@ -84,20 +78,15 @@ impl BatchQueueManager {
                     network,
                 ));
 
-                // Get network provider and clone the Arc for the background task
-                // This ensures only the specific network's provider is held by the background task,
-                // not the entire facilitator with all network providers
-                if let Some(network_provider_arc) = self.facilitator.provider_map().by_network(network) {
-                    let queue_clone = Arc::clone(&queue);
-                    let provider_clone = Arc::clone(network_provider_arc);
-                    let allow_partial_failure = network_config.allow_partial_failure;
+                // Clone the provider Arc for the background task
+                // This ensures only the specific network's provider is held by the background task
+                let queue_clone = Arc::clone(&queue);
+                let provider_clone = Arc::clone(&provider_arc_clone);
+                let allow_partial_failure = network_config.allow_partial_failure;
 
-                    tokio::spawn(async move {
-                        queue_clone.process_loop(provider_clone, allow_partial_failure).await
-                    });
-                } else {
-                    tracing::error!(%network, "failed to get network provider when spawning background task");
-                }
+                tokio::spawn(async move {
+                    queue_clone.process_loop(provider_clone, allow_partial_failure).await
+                });
 
                 queue
             })
