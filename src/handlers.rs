@@ -228,15 +228,23 @@ where
 pub async fn post_settle(
     State(facilitator): State<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>,
     Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
+    Extension(batch_config): Extension<crate::config::BatchSettlementConfig>,
     Extension(abuse_detector): Extension<AbuseDetector>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<SettleRequest>,
 ) -> impl IntoResponse
 {
-    // If batching is enabled, route to batch queue
-    let result = if let Some(manager) = batch_queue_manager {
-        // Extract network from request
-        let network = body.payment_payload.network;
+    // Extract network from request
+    let network = body.payment_payload.network;
+    let network_str = network.to_string();
+
+    // Check if batching is enabled for this network
+    let use_batching = batch_queue_manager.is_some() && batch_config.is_enabled_for_network(&network_str);
+
+    // Route to batch queue or direct settlement based on per-network configuration
+    let result = if use_batching {
+        tracing::debug!(%network, "using batch settlement for this network");
+        let manager = batch_queue_manager.as_ref().unwrap();
 
         // Get network provider for this network to pre-select facilitator address
         use crate::provider_cache::ProviderMap;
@@ -293,8 +301,8 @@ pub async fn post_settle(
             }
         }
     } else {
+        tracing::debug!(%network, "using direct settlement for this network");
         // Direct settlement (no batching) - use settlement lock to prevent nonce collisions
-        let network = body.payment_payload.network;
 
         use crate::provider_cache::ProviderMap;
         let network_provider = match facilitator.provider_map().by_network(network) {

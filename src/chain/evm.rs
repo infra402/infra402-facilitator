@@ -1405,7 +1405,7 @@ where
 /// # Errors
 /// Returns [`FacilitatorLocalError::InvalidTiming`] if the authorization is not yet active or already expired.
 /// Returns [`FacilitatorLocalError::ClockError`] if the system clock cannot be read.
-#[instrument(skip_all, err)]
+#[instrument(skip_all)]
 fn assert_time(
     payer: MixedAddress,
     valid_after: UnixTimestamp,
@@ -1434,7 +1434,7 @@ fn assert_time(
 /// # Errors
 /// Returns [`FacilitatorLocalError::InsufficientFunds`] if the balance is too low.
 /// Returns [`FacilitatorLocalError::ContractCall`] if the balance query fails.
-#[instrument(skip_all, err, fields(
+#[instrument(skip_all, fields(
     sender = %sender,
     max_required = %max_amount_required
 ))]
@@ -1513,7 +1513,7 @@ async fn assert_enough_balance<P: Provider>(
 ///
 /// # Errors
 /// Return [`FacilitatorLocalError::InsufficientValue`] if the payload's value is less than required.
-#[instrument(skip_all, err, fields(
+#[instrument(skip_all, fields(
     sent = %sent,
     max_amount_required = %max_amount_required
 ))]
@@ -1574,7 +1574,7 @@ async fn is_contract_deployed<P: Provider>(
 /// Resolves the `name` and `version` based on:
 /// - Static metadata from [`USDCDeployment`] (if available),
 /// - Or by calling `version()` on the token contract if not matched statically.
-#[instrument(skip_all, err, fields(
+#[instrument(skip_all, fields(
     network = %payload.network,
     asset = %asset_address
 ))]
@@ -1674,7 +1674,7 @@ async fn assert_domain<P: Provider>(
 /// - Correct EIP-712 domain construction.
 /// - Sufficient on-chain balance.
 /// - Sufficient value in payload.
-#[instrument(skip_all, err)]
+#[instrument(skip_all)]
 async fn assert_valid_payment<P: Provider + Clone>(
     provider: P,
     chain: &EvmChain,

@@ -94,15 +94,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let facilitator = FacilitatorLocal::new(provider_cache);
     let axum_state = Arc::new(facilitator);
 
-    // Initialize batch queue manager if enabled in configuration
-    let batch_queue_manager = if app_config.batch_settlement.enabled {
+    // Initialize batch queue manager if enabled globally or for any network
+    let batch_queue_manager = if app_config.batch_settlement.is_enabled_anywhere() {
         tracing::info!(
+            global_enabled = app_config.batch_settlement.enabled,
             max_batch_size = app_config.batch_settlement.max_batch_size,
             max_wait_ms = app_config.batch_settlement.max_wait_ms,
             min_batch_size = app_config.batch_settlement.min_batch_size,
             allow_partial_failure = app_config.batch_settlement.allow_partial_failure,
             "Batch settlement enabled - initializing queue manager"
         );
+
+        // Log per-network batch settlement status
+        let mut enabled_networks = vec![];
+        let mut disabled_networks = vec![];
+        for (network_name, network_config) in &app_config.batch_settlement.networks {
+            if let Some(enabled) = network_config.enabled {
+                if enabled {
+                    enabled_networks.push(network_name.as_str());
+                } else {
+                    disabled_networks.push(network_name.as_str());
+                }
+            }
+        }
+        if !enabled_networks.is_empty() {
+            tracing::info!(
+                networks = ?enabled_networks,
+                "Networks with batch settlement explicitly enabled"
+            );
+        }
+        if !disabled_networks.is_empty() {
+            tracing::info!(
+                networks = ?disabled_networks,
+                "Networks with batch settlement explicitly disabled"
+            );
+        }
 
         let manager = Arc::new(crate::batch_queue::BatchQueueManager::new(
             app_config.batch_settlement.clone(),
@@ -111,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Some(manager)
     } else {
-        tracing::info!("Batch settlement disabled - using direct settlement");
+        tracing::info!("Batch settlement disabled globally - using direct settlement for all networks");
         None
     };
 
@@ -178,6 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(handlers::routes().with_state(axum_state))
         .merge(admin_endpoints)
         .layer(axum::Extension(batch_queue_manager.clone()))
+        .layer(axum::Extension(app_config.batch_settlement.clone()))
         .layer(axum::Extension(abuse_detector.clone()))
         .layer(tower::ServiceBuilder::new()
             .layer(axum::middleware::from_fn(move |req, next| {

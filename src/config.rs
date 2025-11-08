@@ -274,6 +274,29 @@ impl Default for BatchSettlementConfig {
 }
 
 impl BatchSettlementConfig {
+    /// Check if batch settlement is enabled for a specific network.
+    ///
+    /// Resolution order:
+    /// 1. If network has explicit `enabled = true/false`, use that
+    /// 2. Otherwise, fall back to global `enabled` setting
+    pub fn is_enabled_for_network(&self, network_name: &str) -> bool {
+        self.networks
+            .get(network_name)
+            .and_then(|n| n.enabled)
+            .unwrap_or(self.enabled)
+    }
+
+    /// Check if batch settlement is enabled globally or for any network.
+    ///
+    /// Returns true if:
+    /// - Global `enabled = true`, OR
+    /// - Any network has explicit `enabled = true`
+    ///
+    /// This is used to determine if the batch queue manager should be created.
+    pub fn is_enabled_anywhere(&self) -> bool {
+        self.enabled || self.networks.values().any(|n| n.enabled == Some(true))
+    }
+
     /// Get the effective configuration for a specific network.
     ///
     /// Returns a resolved configuration that applies network-specific overrides
@@ -303,6 +326,12 @@ impl BatchSettlementConfig {
 /// All fields are optional - only specified fields override global defaults.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NetworkBatchConfig {
+    /// Override enabled for this network.
+    /// - Some(true): Force batch settlement enabled for this network
+    /// - Some(false): Force batch settlement disabled for this network
+    /// - None: Use global enabled setting
+    pub enabled: Option<bool>,
+
     /// Override max_batch_size for this network.
     pub max_batch_size: Option<usize>,
 
@@ -475,5 +504,99 @@ allow_partial_failure = true
         assert_eq!(avalanche.max_wait_ms, 2000);
         assert_eq!(avalanche.min_batch_size, 50);
         assert!(avalanche.allow_partial_failure);
+    }
+
+    #[test]
+    fn test_batch_settlement_per_network_enabled_override() {
+        let config_str = r#"
+[batch_settlement]
+enabled = false
+
+[batch_settlement.networks.bsc-testnet]
+enabled = true
+max_batch_size = 100
+"#;
+
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+
+        // Global is disabled
+        assert!(!config.batch_settlement.enabled);
+
+        // BSC testnet should be enabled despite global being disabled
+        assert!(config.batch_settlement.is_enabled_for_network("bsc-testnet"));
+
+        // Other networks should fall back to global (disabled)
+        assert!(!config.batch_settlement.is_enabled_for_network("base"));
+        assert!(!config.batch_settlement.is_enabled_for_network("avalanche"));
+
+        // Should return true because at least one network has batching enabled
+        assert!(config.batch_settlement.is_enabled_anywhere());
+    }
+
+    #[test]
+    fn test_batch_settlement_per_network_disabled_override() {
+        let config_str = r#"
+[batch_settlement]
+enabled = true
+
+[batch_settlement.networks.base]
+enabled = false
+"#;
+
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+
+        // Global is enabled
+        assert!(config.batch_settlement.enabled);
+
+        // Base should be disabled despite global being enabled
+        assert!(!config.batch_settlement.is_enabled_for_network("base"));
+
+        // Other networks should fall back to global (enabled)
+        assert!(config.batch_settlement.is_enabled_for_network("bsc"));
+        assert!(config.batch_settlement.is_enabled_for_network("avalanche"));
+
+        // Should return true because global is enabled
+        assert!(config.batch_settlement.is_enabled_anywhere());
+    }
+
+    #[test]
+    fn test_batch_settlement_is_enabled_anywhere() {
+        // Test 1: Global disabled, no network overrides
+        let config1_str = r#"
+[batch_settlement]
+enabled = false
+"#;
+        let config1: FacilitatorConfig = toml::from_str(config1_str).unwrap();
+        assert!(!config1.batch_settlement.is_enabled_anywhere());
+
+        // Test 2: Global enabled
+        let config2_str = r#"
+[batch_settlement]
+enabled = true
+"#;
+        let config2: FacilitatorConfig = toml::from_str(config2_str).unwrap();
+        assert!(config2.batch_settlement.is_enabled_anywhere());
+
+        // Test 3: Global disabled, but one network enabled
+        let config3_str = r#"
+[batch_settlement]
+enabled = false
+
+[batch_settlement.networks.bsc]
+enabled = true
+"#;
+        let config3: FacilitatorConfig = toml::from_str(config3_str).unwrap();
+        assert!(config3.batch_settlement.is_enabled_anywhere());
+
+        // Test 4: Global disabled, network explicitly disabled
+        let config4_str = r#"
+[batch_settlement]
+enabled = false
+
+[batch_settlement.networks.bsc]
+enabled = false
+"#;
+        let config4: FacilitatorConfig = toml::from_str(config4_str).unwrap();
+        assert!(!config4.batch_settlement.is_enabled_anywhere());
     }
 }

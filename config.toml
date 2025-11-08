@@ -175,6 +175,13 @@ allow_partial_failure = false
 # Only specified fields override global defaults for each network
 # Network names: base, base-sepolia, bsc, bsc-testnet, avalanche, avalanche-fuji,
 #                polygon, polygon-amoy, sei, sei-testnet, xdc, solana, solana-devnet
+#
+# Available per-network fields:
+# - enabled: Override global enabled setting (true/false)
+# - max_batch_size: Override max settlements per batch
+# - max_wait_ms: Override max wait time before flushing batch
+# - min_batch_size: Override minimum batch size for immediate flush
+# - allow_partial_failure: Override partial failure handling
 
 # Example: BSC with larger batches and longer wait time
 # [batch_settlement.networks.bsc]
@@ -182,10 +189,16 @@ allow_partial_failure = false
 # max_wait_ms = 1000
 # allow_partial_failure = true
 
+# Example: Enable batching ONLY for BSC testnet (global disabled, per-network enabled)
 [batch_settlement.networks.bsc-testnet]
+enabled = true
 max_batch_size = 100
 max_wait_ms = 1000
 allow_partial_failure = false
+
+# Example: Disable batching for a specific network (global enabled, per-network disabled)
+# [batch_settlement.networks.base]
+# enabled = false
 
 # Example: Base with smaller batches and faster flush for lower latency
 # [batch_settlement.networks.base]
