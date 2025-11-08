@@ -20,17 +20,12 @@ pub struct CliArgs {
     pub total_requests: Option<u64>,
 
     /// Only test /verify endpoint (no settlements)
-    #[arg(long, conflicts_with_all = ["settle_only", "verify_ratio"])]
+    #[arg(long, conflicts_with = "settle_only")]
     pub verify_only: bool,
 
     /// Only test /settle endpoint (no verification-only calls)
-    #[arg(long, conflicts_with_all = ["verify_only", "verify_ratio"])]
+    #[arg(long, conflicts_with = "verify_only")]
     pub settle_only: bool,
-
-    /// Ratio of verify-only calls vs settle calls (0.0-1.0)
-    /// E.g., 0.3 means 30% verify-only, 70% settle
-    #[arg(long, default_value = "0.5", value_parser = parse_ratio)]
-    pub verify_ratio: f32,
 
     /// Number of concurrent worker threads
     #[arg(long, default_value = "10")]
@@ -41,30 +36,12 @@ pub struct CliArgs {
     pub stats_interval_seconds: u64,
 }
 
-fn parse_ratio(s: &str) -> Result<f32, String> {
-    let ratio: f32 = s.parse().map_err(|e| format!("Invalid ratio: {}", e))?;
-    if !(0.0..=1.0).contains(&ratio) {
-        return Err("Ratio must be between 0.0 and 1.0".to_string());
-    }
-    Ok(ratio)
-}
-
 impl CliArgs {
     pub fn validate(&self) -> Result<()> {
         if self.duration_seconds.is_none() && self.total_requests.is_none() {
             anyhow::bail!("Must specify either --duration-seconds or --total-requests");
         }
         Ok(())
-    }
-
-    pub fn get_verify_ratio(&self) -> f32 {
-        if self.verify_only {
-            1.0
-        } else if self.settle_only {
-            0.0
-        } else {
-            self.verify_ratio
-        }
     }
 }
 

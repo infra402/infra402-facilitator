@@ -56,12 +56,14 @@ impl StressTest {
         println!("Workers: {}", self.config.cli.workers);
         println!("RPS Limit: {}", self.config.cli.requests_per_second);
 
-        let verify_ratio = self.config.cli.get_verify_ratio();
-        println!(
-            "Test Mix: {:.0}% verify, {:.0}% settle",
-            verify_ratio * 100.0,
-            (1.0 - verify_ratio) * 100.0
-        );
+        let test_mode = if self.config.cli.verify_only {
+            "verify only"
+        } else if self.config.cli.settle_only {
+            "settle only"
+        } else {
+            "verify + settle pairs"
+        };
+        println!("Test Mode: {}", test_mode);
 
         if let Some(duration) = self.config.cli.duration_seconds {
             println!("Duration: {}s", duration);
@@ -155,11 +157,13 @@ async fn worker_loop(
     stop_flag: Arc<AtomicBool>,
     request_counter: Arc<AtomicU64>,
 ) {
-    let verify_ratio = config.cli.get_verify_ratio();
     let total_requests = config.cli.total_requests;
     let requests_per_second = config.cli.requests_per_second;
+    let verify_only = config.cli.verify_only;
+    let settle_only = config.cli.settle_only;
 
     // Calculate delay between requests for rate limiting
+    // Note: In default mode (verify+settle pairs), RPS applies to pairs, not individual API calls
     let delay_between_requests = if requests_per_second > 0 {
         let total_rps = requests_per_second as f64;
         let per_worker_rps = total_rps / config.cli.workers as f64;
@@ -191,33 +195,49 @@ async fn worker_loop(
             }
         }
 
-        // Determine if this should be a verify or settle request
-        let is_verify = (request_num as f64 / 1000.0).fract() < verify_ratio as f64;
-
-        // Execute request
-        let start = Instant::now();
-        let outcome = execute_request(&config, &client, &sender_wallet, is_verify).await;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        // Record result
-        let request_type = if is_verify {
-            RequestType::Verify
+        // Execute request(s) based on mode
+        if verify_only {
+            // Only send verify
+            execute_and_record(&config, &client, &sender_wallet, &stats, true).await;
+        } else if settle_only {
+            // Only send settle
+            execute_and_record(&config, &client, &sender_wallet, &stats, false).await;
         } else {
-            RequestType::Settle
-        };
-
-        stats.record(RequestRecord {
-            request_type,
-            outcome,
-            latency_ms,
-            timestamp: Utc::now(),
-        });
+            // Default: send both verify AND settle
+            execute_and_record(&config, &client, &sender_wallet, &stats, true).await;
+            execute_and_record(&config, &client, &sender_wallet, &stats, false).await;
+        }
 
         // Rate limiting: sleep between requests
         if delay_between_requests > Duration::from_millis(0) {
             sleep(delay_between_requests).await;
         }
     }
+}
+
+async fn execute_and_record(
+    config: &Config,
+    client: &FacilitatorClient,
+    sender_wallet: &EvmSenderWallet,
+    stats: &Stats,
+    is_verify: bool,
+) {
+    let start = Instant::now();
+    let outcome = execute_request(config, client, sender_wallet, is_verify).await;
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    let request_type = if is_verify {
+        RequestType::Verify
+    } else {
+        RequestType::Settle
+    };
+
+    stats.record(RequestRecord {
+        request_type,
+        outcome,
+        latency_ms,
+        timestamp: Utc::now(),
+    });
 }
 
 async fn execute_request(
