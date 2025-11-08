@@ -52,10 +52,14 @@ impl BatchQueueManager {
         // Clone the provider Arc for use in the closure
         let provider_arc_clone = Arc::clone(network_provider);
 
+        // Capture key and queues map for cleanup after process_loop exits
+        let key = (facilitator_addr, network);
+        let queues_map_clone = Arc::clone(&self.queues);
+
         // Get or create queue for this (facilitator, network) pair
         let queue = self
             .queues
-            .entry((facilitator_addr, network))
+            .entry(key)
             .or_insert_with(|| {
                 // Resolve per-network configuration
                 let network_config = self.config.for_network(&network.to_string());
@@ -78,14 +82,23 @@ impl BatchQueueManager {
                     network,
                 ));
 
-                // Clone the provider Arc for the background task
+                // Clone the provider Arc and queues map for the background task
                 // This ensures only the specific network's provider is held by the background task
                 let queue_clone = Arc::clone(&queue);
                 let provider_clone = Arc::clone(&provider_arc_clone);
+                let queues_map = Arc::clone(&queues_map_clone);
                 let allow_partial_failure = network_config.allow_partial_failure;
 
                 tokio::spawn(async move {
-                    queue_clone.process_loop(provider_clone, allow_partial_failure).await
+                    queue_clone.process_loop(provider_clone, allow_partial_failure).await;
+
+                    // CLEANUP: Remove from DashMap when task exits to release provider Arc
+                    queues_map.remove(&key);
+                    tracing::info!(
+                        facilitator = %key.0,
+                        network = %key.1,
+                        "removed queue entry from DashMap after process_loop exit"
+                    );
                 });
 
                 queue
