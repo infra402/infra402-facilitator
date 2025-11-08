@@ -1028,8 +1028,17 @@ impl EvmProvider {
                 let is_contract_deployed = is_contract_deployed(self.inner(), &payer).await?;
                 let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
 
+                // Extract all necessary data before dropping contract
                 let target = transfer_call.tx.target();
-                let calldata = transfer_call.tx.calldata();
+                let calldata = transfer_call.tx.calldata().clone();
+                let from = transfer_call.from;
+                let to = transfer_call.to;
+                let value = transfer_call.value;
+                let valid_after = transfer_call.valid_after;
+                let valid_before = transfer_call.valid_before;
+                let nonce = transfer_call.nonce;
+                let signature = transfer_call.signature.clone();
+                let contract_address = transfer_call.contract_address;
                 let deployment = if !is_contract_deployed {
                     Some(DeploymentData {
                         factory,
@@ -1039,6 +1048,10 @@ impl EvmProvider {
                     None
                 };
 
+                // Drop transfer_call and contract to release provider clone
+                drop(transfer_call);
+                drop(contract);
+
                 Ok(ValidatedSettlement {
                     target,
                     calldata,
@@ -1046,14 +1059,14 @@ impl EvmProvider {
                     network: self.chain().network(),
                     deployment,
                     metadata: SettlementMetadata {
-                        from: transfer_call.from,
-                        to: transfer_call.to,
-                        value: transfer_call.value,
-                        valid_after: transfer_call.valid_after,
-                        valid_before: transfer_call.valid_before,
-                        nonce: transfer_call.nonce,
-                        signature: transfer_call.signature,
-                        contract_address: transfer_call.contract_address,
+                        from,
+                        to,
+                        value,
+                        valid_after,
+                        valid_before,
+                        nonce,
+                        signature,
+                        contract_address,
                         sig_kind: if is_contract_deployed {
                             "EIP6492.deployed".to_string()
                         } else {
@@ -1066,8 +1079,21 @@ impl EvmProvider {
                 let transfer_call =
                     transferWithAuthorization_0(&contract, &payment, eip1271_signature).await?;
 
+                // Extract all necessary data before dropping contract
                 let target = transfer_call.tx.target();
-                let calldata = transfer_call.tx.calldata();
+                let calldata = transfer_call.tx.calldata().clone();
+                let from = transfer_call.from;
+                let to = transfer_call.to;
+                let value = transfer_call.value;
+                let valid_after = transfer_call.valid_after;
+                let valid_before = transfer_call.valid_before;
+                let nonce = transfer_call.nonce;
+                let signature = transfer_call.signature.clone();
+                let contract_address = transfer_call.contract_address;
+
+                // Drop transfer_call and contract to release provider clone
+                drop(transfer_call);
+                drop(contract);
 
                 Ok(ValidatedSettlement {
                     target,
@@ -1076,14 +1102,14 @@ impl EvmProvider {
                     network: self.chain().network(),
                     deployment: None,
                     metadata: SettlementMetadata {
-                        from: transfer_call.from,
-                        to: transfer_call.to,
-                        value: transfer_call.value,
-                        valid_after: transfer_call.valid_after,
-                        valid_before: transfer_call.valid_before,
-                        nonce: transfer_call.nonce,
-                        signature: transfer_call.signature,
-                        contract_address: transfer_call.contract_address,
+                        from,
+                        to,
+                        value,
+                        valid_after,
+                        valid_before,
+                        nonce,
+                        signature,
+                        contract_address,
                         sig_kind: "EIP1271".to_string(),
                     },
                 })
