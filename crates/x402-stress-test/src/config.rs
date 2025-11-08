@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::env;
-use x402_rs::network::Network;
 
 /// X402 Stress Testing Tool
 #[derive(Parser, Debug, Clone)]
@@ -82,7 +81,8 @@ pub struct EnvConfig {
     pub evm_private_key: String,
 
     /// Network to use (e.g., base-sepolia)
-    pub network: Network,
+    /// Stored as string to support all facilitator networks including BSC
+    pub network: String,
 
     /// Recipient address for payments
     pub pay_to: String,
@@ -114,12 +114,8 @@ impl EnvConfig {
             evm_private_key: env::var("EVM_PRIVATE_KEY")
                 .context("EVM_PRIVATE_KEY not set")?,
 
-            network: {
-                let network_str = env::var("NETWORK").context("NETWORK not set")?;
-                // Parse Network using serde_json since it has serde derives
-                serde_json::from_value(serde_json::Value::String(network_str))
-                    .context("Invalid NETWORK value - must be one of: base-sepolia, base, bsc, bsc-testnet, etc.")?
-            },
+            network: env::var("NETWORK")
+                .context("NETWORK not set - must be one of: base-sepolia, base, xdc, avalanche-fuji, avalanche, solana, solana-devnet, polygon-amoy, polygon, sei, sei-testnet, bsc-testnet, bsc")?,
 
             pay_to: env::var("PAY_TO")
                 .context("PAY_TO not set")?,

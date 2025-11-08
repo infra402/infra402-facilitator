@@ -5,6 +5,7 @@ use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result};
 use chrono::Utc;
+use infra402_facilitator::types::{PaymentPayload, PaymentRequirements, VerifyResponse};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,7 +13,6 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use x402_reqwest::chains::evm::EvmSenderWallet;
 use x402_reqwest::chains::SenderWallet;
-use x402_rs::types::{EvmAddress, MixedAddress, PaymentRequirements, Scheme, TokenAmount, VerifyResponse};
 
 pub struct StressTest {
     config: Config,
@@ -226,23 +226,27 @@ async fn execute_request(
     sender_wallet: &EvmSenderWallet,
     is_verify: bool,
 ) -> RequestOutcome {
-    // Create payment requirements
-    let payment_requirements = PaymentRequirements {
-        scheme: Scheme::Exact,
-        network: config.env.network,
-        max_amount_required: TokenAmount(
+    // Create payment requirements using x402-rs types (for x402-reqwest compatibility)
+    let network_x402rs: x402_rs::network::Network = serde_json::from_value(
+        serde_json::Value::String(config.env.network.clone())
+    ).expect("Invalid network value");
+
+    let payment_requirements_x402rs = x402_rs::types::PaymentRequirements {
+        scheme: x402_rs::types::Scheme::Exact,
+        network: network_x402rs,
+        max_amount_required: x402_rs::types::TokenAmount(
             U256::from_str(&config.env.amount).expect("Invalid AMOUNT format")
         ),
         resource: "http://stress-test".parse().expect("Invalid URL"),
         description: "X402 stress test".to_string(),
         mime_type: "application/json".to_string(),
         output_schema: None,
-        pay_to: MixedAddress::Evm(
-            EvmAddress::from_str(&config.env.pay_to).expect("Invalid PAY_TO address")
+        pay_to: x402_rs::types::MixedAddress::Evm(
+            x402_rs::types::EvmAddress::from_str(&config.env.pay_to).expect("Invalid PAY_TO address")
         ),
         max_timeout_seconds: config.env.max_timeout_seconds,
-        asset: MixedAddress::Evm(
-            EvmAddress::from_str(&config.env.asset).expect("Invalid ASSET address")
+        asset: x402_rs::types::MixedAddress::Evm(
+            x402_rs::types::EvmAddress::from_str(&config.env.asset).expect("Invalid ASSET address")
         ),
         extra: Some({
             let mut map = serde_json::Map::new();
@@ -258,8 +262,8 @@ async fn execute_request(
         }),
     };
 
-    // Generate signed payment payload
-    let payment_payload = match sender_wallet.payment_payload(payment_requirements.clone()).await
+    // Generate signed payment payload (using x402-rs types)
+    let payment_payload_x402rs = match sender_wallet.payment_payload(payment_requirements_x402rs.clone()).await
     {
         Ok(payload) => payload,
         Err(e) => {
@@ -268,6 +272,15 @@ async fn execute_request(
             };
         }
     };
+
+    // Convert x402-rs types to facilitator types via JSON (supports BSC networks)
+    let payment_payload: PaymentPayload = serde_json::from_str(
+        &serde_json::to_string(&payment_payload_x402rs).expect("Failed to serialize payload")
+    ).expect("Failed to deserialize payload");
+
+    let payment_requirements: PaymentRequirements = serde_json::from_str(
+        &serde_json::to_string(&payment_requirements_x402rs).expect("Failed to serialize requirements")
+    ).expect("Failed to deserialize requirements");
 
     // Execute request
     if is_verify {

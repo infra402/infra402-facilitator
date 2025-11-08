@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use reqwest::Client;
-use x402_rs::types::{
+use infra402_facilitator::types::{
     PaymentPayload, PaymentRequirements, SettleResponse, VerifyRequest, VerifyResponse,
 };
+use reqwest::Client;
 
 /// HTTP client for interacting with the facilitator's /verify and /settle endpoints
 #[derive(Clone)]
@@ -30,7 +30,7 @@ impl FacilitatorClient {
         let url = format!("{}/verify", self.base_url);
 
         let request = VerifyRequest {
-            x402_version: x402_rs::types::X402Version::V1,
+            x402_version: infra402_facilitator::types::X402Version::V1,
             payment_payload,
             payment_requirements,
         };
@@ -70,7 +70,7 @@ impl FacilitatorClient {
 
         let request = VerifyRequest {
             // SettleRequest is type alias for VerifyRequest
-            x402_version: x402_rs::types::X402Version::V1,
+            x402_version: infra402_facilitator::types::X402Version::V1,
             payment_payload,
             payment_requirements,
         };

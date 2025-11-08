@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 # X402 dependencies
+infra402-facilitator = { path = "../.." }
 x402-reqwest = { path = "../x402-reqwest" }
 x402-rs = { version = "0.9" }
 
