@@ -12,6 +12,7 @@ use crate::types::{SettleRequest, SettleResponse};
 use alloy::primitives::Address;
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::{Duration, interval};
 
@@ -83,13 +84,20 @@ impl BatchQueueManager {
                     network,
                 ));
 
-                // Spawn background processor for this queue
-                let queue_clone = Arc::clone(&queue);
-                let facilitator_clone = Arc::clone(&self.facilitator);
-                let allow_partial_failure = network_config.allow_partial_failure;
-                tokio::spawn(async move {
-                    queue_clone.process_loop(facilitator_clone, allow_partial_failure).await
-                });
+                // Get network provider and clone the Arc for the background task
+                // This ensures only the specific network's provider is held by the background task,
+                // not the entire facilitator with all network providers
+                if let Some(network_provider_arc) = self.facilitator.provider_map().by_network(network) {
+                    let queue_clone = Arc::clone(&queue);
+                    let provider_clone = Arc::clone(network_provider_arc);
+                    let allow_partial_failure = network_config.allow_partial_failure;
+
+                    tokio::spawn(async move {
+                        queue_clone.process_loop(provider_clone, allow_partial_failure).await
+                    });
+                } else {
+                    tracing::error!(%network, "failed to get network provider when spawning background task");
+                }
 
                 queue
             })
@@ -172,12 +180,16 @@ impl BatchQueue {
     /// Run the batch processing loop for this queue.
     ///
     /// Periodically flushes batches when either max_wait_ms elapses or max_batch_size is reached.
+    /// Exits after 30 seconds of inactivity to allow provider references to be dropped.
     pub async fn process_loop(
         self: Arc<Self>,
-        facilitator: Arc<FacilitatorLocal<ProviderCache>>,
+        network_provider: Arc<crate::chain::NetworkProvider>,
         allow_partial_failure: bool,
     ) {
+        const IDLE_TIMEOUT_SECS: u64 = 30;
+
         let mut ticker = interval(Duration::from_millis(self.max_wait_ms));
+        let mut last_batch_time = Instant::now();
 
         tracing::info!(
             facilitator = %self.facilitator_addr,
@@ -185,27 +197,51 @@ impl BatchQueue {
             max_batch_size = self.max_batch_size,
             max_wait_ms = self.max_wait_ms,
             min_batch_size = self.min_batch_size,
+            idle_timeout_secs = IDLE_TIMEOUT_SECS,
             "batch processor started for queue"
         );
 
         loop {
             ticker.tick().await;
 
-            if let Err(e) = self.flush_batch(&facilitator, allow_partial_failure).await {
+            // Check if queue is empty
+            let is_empty = self.pending.lock().await.is_empty();
+
+            // Exit if idle timeout exceeded
+            if is_empty && last_batch_time.elapsed().as_secs() >= IDLE_TIMEOUT_SECS {
+                tracing::info!(
+                    facilitator = %self.facilitator_addr,
+                    network = %self.network,
+                    idle_seconds = last_batch_time.elapsed().as_secs(),
+                    "batch processor exiting due to idle timeout"
+                );
+                break;
+            }
+
+            if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
                 tracing::error!(
                     facilitator = %self.facilitator_addr,
                     network = %self.network,
                     error = ?e,
                     "failed to flush batch"
                 );
+            } else if !is_empty {
+                // Reset idle timer when we process a non-empty batch
+                last_batch_time = Instant::now();
             }
         }
+
+        tracing::info!(
+            facilitator = %self.facilitator_addr,
+            network = %self.network,
+            "batch processor stopped"
+        );
     }
 
     /// Flush the current batch of pending requests.
     async fn flush_batch(
         &self,
-        facilitator: &FacilitatorLocal<ProviderCache>,
+        network_provider: &crate::chain::NetworkProvider,
         allow_partial_failure: bool,
     ) -> Result<(), FacilitatorLocalError> {
         // Take up to max_batch_size requests from the queue
@@ -229,12 +265,6 @@ impl BatchQueue {
             batch_size = batch.len(),
             "flushing batch"
         );
-
-        // Get network provider for this queue's network
-        let network_provider = facilitator
-            .provider_map()
-            .by_network(self.network)
-            .ok_or(FacilitatorLocalError::UnsupportedNetwork(None))?;
 
         // Process batch using batch_processor
         crate::batch_processor::BatchProcessor::process_batch(

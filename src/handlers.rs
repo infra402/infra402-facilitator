@@ -263,7 +263,7 @@ pub async fn post_settle(
 
         // Pre-select facilitator address using round-robin
         use crate::chain::NetworkProviderOps;
-        let facilitator_addr: alloy::primitives::Address = match network_provider {
+        let facilitator_addr: alloy::primitives::Address = match network_provider.as_ref() {
             crate::chain::NetworkProvider::Evm(evm_provider) => {
                 evm_provider.next_signer_address()
             }
@@ -319,7 +319,7 @@ pub async fn post_settle(
         };
 
         // Use locked settlement for EVM to prevent nonce collisions
-        match network_provider {
+        match network_provider.as_ref() {
             crate::chain::NetworkProvider::Evm(evm_provider) => {
                 tracing::debug!(%network, "direct settlement with lock");
                 evm_provider.settle_with_lock(&body).await
@@ -328,7 +328,7 @@ pub async fn post_settle(
                 // Solana settlements are sequential by nature
                 tracing::debug!(%network, "direct solana settlement");
                 use crate::facilitator::Facilitator;
-                network_provider.settle(&body).await
+                network_provider.as_ref().settle(&body).await
             }
         }
     };

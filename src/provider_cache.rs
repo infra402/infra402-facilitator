@@ -20,6 +20,7 @@
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::chain::FromEnvByNetworkBuild;
 use crate::chain::NetworkProvider;
@@ -32,7 +33,7 @@ use crate::network::Network;
 ///
 /// Use [`ProviderCache::from_env`] to load credentials and connect using environment variables.
 pub struct ProviderCache {
-    providers: HashMap<Network, NetworkProvider>,
+    providers: HashMap<Network, Arc<NetworkProvider>>,
 }
 
 /// A generic cache of pre-initialized Ethereum provider instances [`ProviderMap::Value`] keyed by network.
@@ -50,8 +51,8 @@ pub trait ProviderMap {
 }
 
 impl<'a> IntoIterator for &'a ProviderCache {
-    type Item = (&'a Network, &'a NetworkProvider);
-    type IntoIter = std::collections::hash_map::Iter<'a, Network, NetworkProvider>;
+    type Item = (&'a Network, &'a Arc<NetworkProvider>);
+    type IntoIter = std::collections::hash_map::Iter<'a, Network, Arc<NetworkProvider>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.providers.iter()
@@ -72,7 +73,7 @@ impl ProviderCache {
         for network in Network::variants() {
             let network_provider = NetworkProvider::from_env(*network).await?;
             if let Some(network_provider) = network_provider {
-                providers.insert(*network, network_provider);
+                providers.insert(*network, Arc::new(network_provider));
             }
         }
         Ok(Self { providers })
@@ -80,9 +81,9 @@ impl ProviderCache {
 }
 
 impl ProviderMap for ProviderCache {
-    type Value = NetworkProvider;
+    type Value = Arc<NetworkProvider>;
 
-    fn by_network<N: Borrow<Network>>(&self, network: N) -> Option<&NetworkProvider> {
+    fn by_network<N: Borrow<Network>>(&self, network: N) -> Option<&Arc<NetworkProvider>> {
         self.providers.get(network.borrow())
     }
 
