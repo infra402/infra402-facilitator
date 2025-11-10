@@ -4,6 +4,29 @@
 
 A hardened [x402 protocol](https://x402.org) facilitator built on [x402-rs](https://github.com/x402-rs/x402-rs), featuring comprehensive security middleware, abuse detection, rate limiting, and Multicall3 batch settlement for production deployments.
 
+## Recent Updates
+
+### 🎉 Post-Settlement Hooks (v0.10.0)
+Execute custom contract calls atomically with settlement transfers via Multicall3. Supports hot-reload, per-destination mappings, and flexible failure handling. [→ Documentation](docs/HOOKS_IMPLEMENTATION.md)
+
+### ⚡ Performance Improvements
+- **RPC Optimization**: Batching and caching for 2-3x faster verification
+- **Connection Pool**: Configurable connection limits and idle timeouts
+- **Nonce Management**: Improved retry logic from x402-rs v0.9.2 integration
+
+### 🔧 Configuration Enhancements
+- **Rate Limit Whitelist**: Exempt trusted IPs from rate limiting
+- **Per-Network Batch Control**: Enable/disable batching per blockchain
+- **Global Batch Settlement**: Simplified enablement across all networks
+
+### 🧪 Developer Tools
+- **Stress Testing**: Standalone tool for load testing with BSC support
+- **Improved Logging**: Better visibility into batch processing and sub-batching
+
+### 📦 Dependencies
+- Upgraded to Alloy 1.1.0 for latest network features
+- Integrated x402-rs v0.9.2 with enhanced nonce management
+
 ## Features
 
 ### Core Protocol
@@ -11,12 +34,14 @@ A hardened [x402 protocol](https://x402.org) facilitator built on [x402-rs](http
 - ✅ **Multi-Chain**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
 - ✅ **Payment Verification**: Cryptographic signature validation and balance checks
 - ✅ **Payment Settlement**: On-chain transaction submission and monitoring
+- ✨ **Post-Settlement Hooks**: Execute custom contract calls atomically with settlements
 
 ### Security & Operations
 - 🔒 **Enterprise Security**: Rate limiting, API keys, IP filtering, abuse detection
 - 📊 **Observability**: OpenTelemetry tracing, structured logging, admin stats
 - ⚡ **High Performance**: Multi-wallet concurrency, Multicall3 batch settlement (100-150x throughput)
 - 🐳 **Cloud Native**: Docker, Kubernetes, systemd deployment options
+- 🔄 **Hot Reload**: Runtime configuration updates without restart
 
 ## Quick Start
 
@@ -77,6 +102,10 @@ curl http://localhost:8080/health
 - **[Networks Guide](docs/NETWORKS.md)** - Supported blockchains and RPC configuration
 - **[Performance Guide](docs/PERFORMANCE.md)** - Multi-wallet scaling for high throughput
 - **[Batch Settlement Guide](docs/BATCH_SETTLEMENT.md)** - 100-150x throughput with Multicall3
+
+### Advanced Features
+- **[Post-Settlement Hooks](docs/HOOKS_IMPLEMENTATION.md)** - Custom contract calls with atomic execution
+- **[Testing Hooks](docs/TESTING_HOOKS.md)** - Hook setup and testing procedures
 
 ### Operations
 - **[Observability Guide](docs/OBSERVABILITY.md)** - Logging, tracing, and monitoring
@@ -175,6 +204,39 @@ max_wait_ms = 1000
 
 **→ [Batch Settlement Guide](docs/BATCH_SETTLEMENT.md)**
 
+### Post-Settlement Hooks
+
+Execute custom contract calls atomically with settlement transfers:
+
+```toml
+[hooks]
+enabled = true
+allow_hook_failure = false
+
+[hooks.mappings]
+"0xYourRecipientAddress" = ["notify_settlement"]
+
+[hooks.definitions.notify_settlement]
+enabled = true
+description = "Notifies contract when settlement occurs"
+contract = "0xYourHookContractAddress"
+calldata = "0xEncodedCalldata"
+gas_limit = 100000
+```
+
+**Benefits:**
+- **Atomic execution** - Hooks run in same transaction as settlement
+- **Hot-reload** - Update configuration via admin API without restart
+- **Flexible** - Multiple hooks per destination, per-hook gas limits
+- **Safe** - Whitelist-only, ABI validation, configurable failure handling
+
+**Admin API:**
+- `GET /admin/hooks` - List hook definitions
+- `POST /admin/hooks/reload` - Hot-reload configuration
+- `POST /admin/hooks/:name/enable` - Enable/disable hooks
+
+**→ [Hook Implementation Guide](docs/HOOKS_IMPLEMENTATION.md)** | **[Testing Guide](docs/TESTING_HOOKS.md)**
+
 ### Multi-Wallet Concurrency
 
 Scale settlement throughput with multiple facilitator wallets:
@@ -236,6 +298,12 @@ log_security_events = true
 
 ### Admin (admin key required)
 - `GET /admin/stats` - Security and queue statistics
+- `GET /admin/hooks` - List hook definitions
+- `GET /admin/hooks/mappings` - List destination mappings
+- `GET /admin/hooks/status` - Hook system status
+- `POST /admin/hooks/reload` - Hot-reload hook configuration
+- `POST /admin/hooks/:name/enable` - Enable specific hook
+- `POST /admin/hooks/:name/disable` - Disable specific hook
 
 **→ [API Reference](docs/API.md)**
 
