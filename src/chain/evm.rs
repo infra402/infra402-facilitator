@@ -45,6 +45,7 @@ use tracing_core::Level;
 use crate::chain::{FacilitatorLocalError, FromEnvByNetworkBuild, NetworkProviderOps};
 use crate::facilitator::Facilitator;
 use crate::from_env;
+use crate::hooks::{HookCall, HookManager};
 use crate::network::{Network, USDCDeployment};
 use crate::timestamp::UnixTimestamp;
 use crate::types::{
@@ -1128,6 +1129,8 @@ pub struct ValidatedSettlement {
     pub network: Network,
     /// Optional EIP-6492 deployment data (if wallet not yet deployed)
     pub deployment: Option<DeploymentData>,
+    /// Post-settlement hooks to execute atomically (via Multicall3)
+    pub hooks: Vec<HookCall>,
     /// Tracing metadata
     pub metadata: SettlementMetadata,
 }
@@ -1161,6 +1164,7 @@ impl EvmProvider {
     pub async fn validate_and_prepare_settlement(
         &self,
         request: &SettleRequest,
+        hook_manager: Option<&Arc<HookManager>>,
     ) -> Result<ValidatedSettlement, FacilitatorLocalError> {
         let payload = &request.payment_payload;
         let requirements = &request.payment_requirements;
@@ -1203,6 +1207,13 @@ impl EvmProvider {
                     None
                 };
 
+                // Lookup hooks for destination address
+                let hooks = if let Some(hook_mgr) = hook_manager {
+                    hook_mgr.get_hooks_for_destination(to).await
+                } else {
+                    Vec::new()
+                };
+
                 // Drop transfer_call and contract to release provider clone
                 drop(transfer_call);
                 drop(contract);
@@ -1213,6 +1224,7 @@ impl EvmProvider {
                     payer: payment.from.into(),
                     network: self.chain().network(),
                     deployment,
+                    hooks,
                     metadata: SettlementMetadata {
                         from,
                         to,
@@ -1246,6 +1258,13 @@ impl EvmProvider {
                 let signature = transfer_call.signature.clone();
                 let contract_address = transfer_call.contract_address;
 
+                // Lookup hooks for destination address
+                let hooks = if let Some(hook_mgr) = hook_manager {
+                    hook_mgr.get_hooks_for_destination(to).await
+                } else {
+                    Vec::new()
+                };
+
                 // Drop transfer_call and contract to release provider clone
                 drop(transfer_call);
                 drop(contract);
@@ -1256,6 +1275,7 @@ impl EvmProvider {
                     payer: payment.from.into(),
                     network: self.chain().network(),
                     deployment: None,
+                    hooks,
                     metadata: SettlementMetadata {
                         from,
                         to,
@@ -1292,6 +1312,16 @@ impl EvmProvider {
         let mut calls = Vec::new();
         let mut deployment_indices = Vec::new(); // Track which calls are deployments
 
+        // Determine allow_failure based on whether hooks are present
+        let has_hooks = settlements.iter().any(|s| !s.hooks.is_empty());
+        let hook_allow_failure = if has_hooks {
+            // If any settlement has hooks, use allow_hook_failure setting
+            // This will be passed from config
+            allow_partial_failure // TODO: Use allow_hook_failure from config
+        } else {
+            allow_partial_failure
+        };
+
         for (_idx, settlement) in settlements.iter().enumerate() {
             // Add deployment call if needed (EIP-6492 counterfactual wallet)
             if let Some(deployment) = &settlement.deployment {
@@ -1305,10 +1335,19 @@ impl EvmProvider {
 
             // Add transfer call
             calls.push(IMulticall3::Call3 {
-                allowFailure: allow_partial_failure,
+                allowFailure: hook_allow_failure,
                 target: settlement.target,
                 callData: settlement.calldata.clone(),
             });
+
+            // Add hook calls for this settlement
+            for hook in &settlement.hooks {
+                calls.push(IMulticall3::Call3 {
+                    allowFailure: hook.allow_failure,
+                    target: hook.target,
+                    callData: hook.calldata.clone(),
+                });
+            }
         }
 
         // Build and send Multicall3 aggregate3 transaction

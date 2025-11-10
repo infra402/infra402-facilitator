@@ -77,7 +77,7 @@ impl BatchProcessor {
         let mut response_channels = Vec::with_capacity(requests.len());
 
         for (request, response_tx) in requests {
-            match evm_provider.validate_and_prepare_settlement(&request).await {
+            match evm_provider.validate_and_prepare_settlement(&request, None).await {
                 Ok(validated) => {
                     validated_settlements.push(validated);
                     response_channels.push(response_tx);
@@ -101,40 +101,85 @@ impl BatchProcessor {
 
         tracing::info!(
             validated_count = validated_settlements.len(),
-            "validated settlements - sending Multicall3 batch"
+            "validated settlements - splitting into Call3-aware sub-batches"
         );
 
-        // Use PRESELECTED_FACILITATOR task-local to ensure correct signer
-        use crate::chain::evm::PRESELECTED_FACILITATOR;
-        let batch_result = PRESELECTED_FACILITATOR
-            .scope(
-                facilitator_addr,
-                evm_provider.settle_batch(validated_settlements, allow_partial_failure),
-            )
-            .await;
+        // Split validated settlements into sub-batches based on max Call3 count
+        // Each settlement needs 1 Call3 for the transfer + N Call3s for hooks
+        // max_batch_size in config represents max total Call3 structs, not settlement count
+        const MAX_CALL3_PER_BATCH: usize = 150; // TODO: Make this configurable
 
-        match batch_result {
-            Ok(responses) => {
-                // Send each response back to its requester
-                for (response, response_tx) in responses.into_iter().zip(response_channels.into_iter()) {
-                    let _ = response_tx.send(Ok(response));
-                }
-                tracing::info!("batch settlement completed successfully");
-                Ok(())
+        let mut sub_batches = Vec::new();
+        let mut current_batch = Vec::new();
+        let mut current_batch_channels = Vec::new();
+        let mut current_call3_count = 0;
+
+        for (settlement, channel) in validated_settlements.into_iter().zip(response_channels.into_iter()) {
+            let calls_needed = 1 + settlement.hooks.len(); // 1 for transfer + N for hooks
+
+            // If adding this settlement would exceed limit, flush current batch
+            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty() {
+                sub_batches.push((current_batch, current_batch_channels));
+                current_batch = Vec::new();
+                current_batch_channels = Vec::new();
+                current_call3_count = 0;
             }
-            Err(e) => {
-                tracing::error!(error = ?e, "batch settlement failed");
-                // Send generic batch failure error to all remaining requesters
-                // (can't clone the original error)
-                for response_tx in response_channels {
-                    let batch_error = FacilitatorLocalError::ContractCall(
-                        "Batch settlement failed".to_string()
-                    );
-                    let _ = response_tx.send(Err(batch_error));
+
+            current_batch.push(settlement);
+            current_batch_channels.push(channel);
+            current_call3_count += calls_needed;
+        }
+
+        // Add final batch if non-empty
+        if !current_batch.is_empty() {
+            sub_batches.push((current_batch, current_batch_channels));
+        }
+
+        tracing::info!(
+            sub_batch_count = sub_batches.len(),
+            "split into {} sub-batches based on Call3 limits",
+            sub_batches.len()
+        );
+
+        // Process each sub-batch sequentially
+        use crate::chain::evm::PRESELECTED_FACILITATOR;
+        for (batch_settlements, batch_channels) in sub_batches {
+            tracing::info!(
+                batch_size = batch_settlements.len(),
+                total_call3s = batch_settlements.iter().map(|s| 1 + s.hooks.len()).sum::<usize>(),
+                "processing sub-batch"
+            );
+
+            let batch_result = PRESELECTED_FACILITATOR
+                .scope(
+                    facilitator_addr,
+                    evm_provider.settle_batch(batch_settlements, allow_partial_failure),
+                )
+                .await;
+
+            match batch_result {
+                Ok(responses) => {
+                    // Send each response back to its requester
+                    for (response, response_tx) in responses.into_iter().zip(batch_channels.into_iter()) {
+                        let _ = response_tx.send(Ok(response));
+                    }
                 }
-                Err(e)
+                Err(e) => {
+                    tracing::error!(error = ?e, "sub-batch settlement failed");
+                    // Send error to all requesters in this sub-batch
+                    for response_tx in batch_channels {
+                        let batch_error = FacilitatorLocalError::ContractCall(
+                            "Batch settlement failed".to_string()
+                        );
+                        let _ = response_tx.send(Err(batch_error));
+                    }
+                    return Err(e);
+                }
             }
         }
+
+        tracing::info!("all sub-batches completed successfully");
+        Ok(())
     }
 
     /// Fallback: process settlements individually (used for Solana or when batching fails).

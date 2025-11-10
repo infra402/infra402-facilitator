@@ -1,0 +1,50 @@
+# Post-settlement hooks configuration
+#
+# This file defines custom contract calls that are executed atomically
+# with settlement transfers via Multicall3.
+#
+# Hooks allow additional on-chain logic to run immediately after a payment
+# is settled, all within the same transaction for atomicity.
+
+[hooks]
+# Global enable/disable flag for the hook system
+enabled = false
+
+# Allow hook calls to fail without reverting the entire batch
+# When true: Individual hook calls can fail without reverting transfers
+# When false: Any hook failure reverts the entire batch (safer default)
+allow_hook_failure = false
+
+# Destination address → hook mapping
+# Maps recipient addresses to hook names that should execute when they receive payments
+# Format: [hooks.mappings]
+# "0x..." = ["hook_name_1", "hook_name_2"]
+[hooks.mappings]
+# Example: When 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb receives a payment, execute "example_hook"
+# "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["example_hook"]
+
+# Hook definitions
+# Each hook defines a contract call to execute
+[hooks.definitions]
+
+# Example hook definition (disabled by default)
+# [hooks.definitions.example_hook]
+# enabled = false
+# description = "Example hook that calls notifySettlement on a contract"
+# contract = "0x0000000000000000000000000000000000000000"  # Target contract address
+# calldata = "0x12345678"  # Pre-encoded calldata for the hook function
+# gas_limit = 100000  # Gas limit for this specific hook (0 = unlimited)
+
+# To add a new hook:
+# 1. Deploy your hook contract (must have a function to call)
+# 2. Generate the ABI and place it in abi/hooks/YourHook.json
+# 3. Encode the calldata for your function call
+# 4. Add the hook definition here
+# 5. Map destination addresses to this hook in [hooks.mappings]
+# 6. Enable the hook by setting enabled = true
+#
+# Security notes:
+# - All hooks must be manually added by admins through code changes
+# - Hook ABIs must exist in abi/hooks/ directory
+# - Hooks execute with the facilitator's permissions
+# - Use allow_hook_failure carefully - failed hooks may indicate issues

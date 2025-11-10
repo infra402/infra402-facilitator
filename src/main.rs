@@ -43,6 +43,7 @@ mod facilitator;
 mod facilitator_local;
 mod from_env;
 mod handlers;
+mod hooks;
 mod network;
 mod provider_cache;
 mod security;
@@ -140,6 +141,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Initialize hook manager
+    let hook_manager = match crate::hooks::HookManager::new("hooks.toml") {
+        Ok(manager) => {
+            tracing::info!("Hook manager initialized successfully");
+            Some(Arc::new(manager))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to initialize hook manager - hooks will be disabled");
+            None
+        }
+    };
+
     // Initialize security components
     let api_key_auth = ApiKeyAuth::from_env();
     let admin_auth = AdminAuth::from_env();
@@ -191,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Admin routes with separate authentication
-    let admin_endpoints = Router::new()
+    let mut admin_endpoints = Router::new()
         .merge(handlers::admin_routes())
         .layer(axum::Extension(batch_queue_manager.clone()))
         .layer(axum::Extension(abuse_detector.clone()))
@@ -200,9 +213,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             async move { auth.middleware(req, next).await }
         }));
 
+    // Add hook admin routes if hook manager is initialized
+    if let Some(ref manager) = hook_manager {
+        let hook_routes = crate::hooks::admin::admin_hook_routes(
+            Arc::clone(manager),
+            admin_auth.clone(),
+        );
+        admin_endpoints = admin_endpoints.merge(hook_routes);
+        tracing::info!("Hook admin routes registered");
+    }
+
     let http_endpoints = Router::new()
         .merge(handlers::routes().with_state(axum_state))
         .merge(admin_endpoints)
+        .layer(axum::Extension(hook_manager.clone()))
         .layer(axum::Extension(batch_queue_manager.clone()))
         .layer(axum::Extension(app_config.batch_settlement.clone()))
         .layer(axum::Extension(abuse_detector.clone()))

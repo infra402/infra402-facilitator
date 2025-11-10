@@ -282,6 +282,13 @@ pub struct BatchSettlementConfig {
     /// Default: false
     pub allow_partial_failure: bool,
 
+    /// Allow hook failures in batch when hooks are present (global default).
+    /// - true: Hook calls can fail without reverting entire batch
+    /// - false: Any hook failure reverts entire batch
+    /// When hooks are attached to a settlement, this overrides allow_partial_failure.
+    /// Default: false
+    pub allow_hook_failure: bool,
+
     /// Per-network configuration overrides.
     /// Key is the network name (e.g., "base", "bsc", "avalanche").
     /// Each network can override any subset of the global defaults.
@@ -297,6 +304,7 @@ impl Default for BatchSettlementConfig {
             max_wait_ms: 500,
             min_batch_size: 10,
             allow_partial_failure: false,
+            allow_hook_failure: false,
             networks: HashMap::new(),
         }
     }
