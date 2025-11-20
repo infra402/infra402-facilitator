@@ -8,7 +8,7 @@ Post-settlement hooks allow you to execute custom contract calls atomically with
 
 ## Hook Types
 
-### Parameterized Hooks (Recommended)
+### Parameterized Hooks
 
 Dynamic calldata built from payment data, runtime context, or static values. Provides full access to EIP-3009 parameters and runtime information.
 
@@ -17,12 +17,6 @@ Dynamic calldata built from payment data, runtime context, or static values. Pro
 - Access to full EIP-3009 authorization data
 - Runtime context (timestamps, block numbers, batch info)
 - Flexible parameter composition
-
-### Legacy Static Hooks (Deprecated)
-
-Pre-encoded calldata that never changes. Simple but inflexible.
-
-**Use only when:** You have completely static calldata with no dynamic values.
 
 ## Configuration Structure
 
@@ -121,13 +115,43 @@ source = { source_type = "static", value = "100" }
 
 ## Example Implementations
 
-### Example 1: TokenMintWith3009 EIP-3009 Callback
+### Example 1: TokenMintWith3009 EIP-3009 Callback (Complete Step-by-Step Guide)
 
-Calls `onPaymentReceived` on TokenMintWith3009 contract with full EIP-3009 parameters.
+This example shows how to set up a hook that calls `onPaymentReceived` on a TokenMintWith3009 contract whenever it receives a payment. The hook passes all EIP-3009 authorization parameters including signature components.
 
-**Solidity Interface:**
+#### Overview
+
+When a user sends a payment to your TokenMintWith3009 contract, the facilitator will:
+1. Execute the EIP-3009 `transferWithAuthorization` on the token contract
+2. Immediately call `onPaymentReceived` on your hook contract with all payment details
+3. Both calls execute atomically in a single Multicall3 transaction
+
+#### Step 1: Deploy Your Hook Contract
+
+**1.1 Write the Solidity Contract**
+
+Your contract must implement the `onPaymentReceived` function:
+
 ```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
 interface ITokenMintWith3009 {
+    function onPaymentReceived(
+        address from,        // Payer address
+        uint256 value,       // Amount transferred
+        uint256 validAfter,  // EIP-3009 validAfter timestamp
+        uint256 validBefore, // EIP-3009 validBefore timestamp
+        bytes32 nonce,       // EIP-3009 unique nonce
+        uint8 v,             // Signature v component
+        bytes32 r,           // Signature r component
+        bytes32 s            // Signature s component
+    ) external;
+}
+
+contract TokenMintWith3009 is ITokenMintWith3009 {
+    event PaymentReceived(address indexed from, uint256 value, bytes32 nonce);
+
     function onPaymentReceived(
         address from,
         uint256 value,
@@ -137,57 +161,306 @@ interface ITokenMintWith3009 {
         uint8 v,
         bytes32 r,
         bytes32 s
-    ) external;
+    ) external override {
+        // Your custom logic here
+        // Example: Mint tokens, NFTs, update state, etc.
+
+        emit PaymentReceived(from, value, nonce);
+    }
 }
 ```
 
-**Configuration:**
+**1.2 Compile and Deploy**
+
+```bash
+# Using Foundry
+forge build
+forge create --rpc-url https://sepolia.base.org \
+  --private-key $PRIVATE_KEY \
+  src/TokenMintWith3009.sol:TokenMintWith3009
+
+# Or using Hardhat
+npx hardhat run scripts/deploy.js --network base-sepolia
+```
+
+**1.3 Verify the Contract**
+
+```bash
+# Verify on block explorer
+forge verify-contract \
+  --chain base-sepolia \
+  --compiler-version v0.8.20 \
+  0xYourDeployedAddress \
+  src/TokenMintWith3009.sol:TokenMintWith3009
+```
+
+**Note the deployed contract address** - you'll need it for configuration.
+
+#### Step 2: Set Up ABI File
+
+**2.1 Extract ABI from Compilation**
+
+After compiling, your ABI is in:
+- Foundry: `out/TokenMintWith3009.sol/TokenMintWith3009.json`
+- Hardhat: `artifacts/contracts/TokenMintWith3009.sol/TokenMintWith3009.json`
+
+**2.2 Copy ABI to Facilitator**
+
+Save the ABI in the facilitator's `abi/` directory:
+
+```bash
+# Copy from compilation output
+cp out/TokenMintWith3009.sol/TokenMintWith3009.json abi/TokenMintWith3009.json
+
+# Or place in hooks subdirectory
+cp out/TokenMintWith3009.sol/TokenMintWith3009.json abi/hooks/TokenMintWith3009.json
+```
+
+**2.3 Verify ABI Content**
+
+Ensure the ABI includes the `onPaymentReceived` function:
+
+```bash
+# Check function exists in ABI
+jq '.[] | select(.name == "onPaymentReceived")' abi/TokenMintWith3009.json
+```
+
+**Reference**: See `abi/TokenMintWith3009.json` in this repository for a complete reference implementation.
+
+#### Step 3: Configure Hook in hooks.toml
+
+**3.1 Add Hook Definition**
+
+Edit `/hooks.toml` and add your hook:
+
 ```toml
 [hooks.definitions.token_mint_callback]
 enabled = true
 description = "Calls onPaymentReceived with EIP-3009 authorization parameters"
-contract = "0xYourTokenMintContractAddress"
+contract = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"  # Your deployed contract address
 function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
-gas_limit = 200000
+gas_limit = 200000  # Adjust based on your contract's gas usage
 
+# Parameter 1: from (payer address)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "address"
 source = { source_type = "payment", field = "from" }
 
+# Parameter 2: value (transfer amount)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "uint256"
 source = { source_type = "payment", field = "value" }
 
+# Parameter 3: validAfter (EIP-3009 timestamp)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "uint256"
 source = { source_type = "payment", field = "validafter" }
 
+# Parameter 4: validBefore (EIP-3009 timestamp)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "uint256"
 source = { source_type = "payment", field = "validbefore" }
 
+# Parameter 5: nonce (EIP-3009 unique nonce)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "bytes32"
 source = { source_type = "payment", field = "nonce" }
 
+# Parameter 6: v (signature component)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "uint8"
 source = { source_type = "payment", field = "signaturev" }
 
+# Parameter 7: r (signature component)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "bytes32"
 source = { source_type = "payment", field = "signaturer" }
 
+# Parameter 8: s (signature component)
 [[hooks.definitions.token_mint_callback.parameters]]
 type = "bytes32"
 source = { source_type = "payment", field = "signatures" }
 ```
 
-**Mapping:**
+**3.2 Add Recipient Mapping**
+
+Map your contract address to the hook:
+
 ```toml
 [hooks.mappings]
-"0xYourTokenMintContractAddress" = ["token_mint_callback"]
+"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["token_mint_callback"]
 ```
+
+**Important**: The recipient address in mappings should match the contract address where payments will be sent.
+
+**3.3 Enable Hooks Globally**
+
+Ensure hooks are enabled at the top of `hooks.toml`:
+
+```toml
+[hooks]
+enabled = true
+allow_hook_failure = false  # Recommended: hooks must succeed
+```
+
+#### Step 4: Test the Hook
+
+**4.1 Reload Configuration**
+
+If facilitator is running, reload the configuration:
+
+```bash
+curl -X POST http://localhost:8080/admin/hooks/reload \
+  -H "X-Admin-Key: your-admin-key"
+```
+
+Or restart the facilitator:
+
+```bash
+cargo run
+```
+
+**4.2 Verify Hook is Loaded**
+
+Check hook status:
+
+```bash
+curl http://localhost:8080/admin/hooks/status \
+  -H "X-Admin-Key: your-admin-key"
+
+# Should show: enabled: true, hooks_count: 1
+```
+
+**4.3 Send Test Payment**
+
+Send a test payment to your hook contract address using the x402 client or API:
+
+```bash
+POST /settle
+{
+  "network": "base-sepolia",
+  "payment_payload": {...},  # EIP-3009 authorization for your contract
+  "payment_requirements": {...}
+}
+```
+
+**4.4 Verify Execution**
+
+Check the transaction on the block explorer:
+
+1. Find the settlement transaction hash from the API response
+2. Open in Basescan (or your network's explorer)
+3. Look for:
+   - **Transfer event** from USDC contract (payment executed)
+   - **PaymentReceived event** from your contract (hook executed)
+4. Verify both events are in the same transaction
+
+**Example transaction**:
+```
+Multicall3.aggregate3()
+├─ USDC.transferWithAuthorization() ✓
+└─ TokenMintWith3009.onPaymentReceived() ✓
+```
+
+#### Step 5: Troubleshooting
+
+**Hook Not Executing**
+
+1. **Check hook is enabled**:
+   ```bash
+   curl http://localhost:8080/admin/hooks \
+     -H "X-Admin-Key: your-admin-key" | jq '.hooks.token_mint_callback.enabled'
+   ```
+
+2. **Verify recipient mapping**:
+   ```bash
+   curl http://localhost:8080/admin/hooks/mappings \
+     -H "X-Admin-Key: your-admin-key"
+   ```
+
+3. **Check facilitator logs**:
+   ```bash
+   # Look for hook resolution logs
+   grep "Retrieved hooks for destination" logs/facilitator.log
+   ```
+
+**Function Signature Mismatch**
+
+Verify your function signature matches the ABI:
+
+```bash
+# Extract function signature from ABI
+cast sig "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
+
+# Should match your hooks.toml function_signature
+```
+
+**Parameter Encoding Errors**
+
+Check facilitator logs for encoding errors:
+
+```bash
+grep "Failed to encode hook calldata" logs/facilitator.log
+```
+
+Common issues:
+- Type mismatch (e.g., `address` vs `uint256`)
+- Wrong field name (e.g., `signatureV` vs `signaturev` - must be lowercase)
+- Missing parameter
+
+**Out of Gas**
+
+If hook reverts with out-of-gas:
+
+1. Estimate gas for your function:
+   ```bash
+   cast estimate --rpc-url https://sepolia.base.org \
+     0xYourContract \
+     "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)" \
+     0xFromAddress 1000000000000000000 0 999999999999999999 \
+     0x0000000000000000000000000000000000000000000000000000000000000001 \
+     27 0x... 0x...
+   ```
+
+2. Update `gas_limit` in hooks.toml with 20% buffer:
+   ```toml
+   gas_limit = 240000  # If estimate was 200k
+   ```
+
+**Checking Transaction Logs**
+
+View detailed transaction information:
+
+```bash
+# Get transaction receipt
+cast receipt --rpc-url https://sepolia.base.org 0xTransactionHash
+
+# Decode logs
+cast logs --rpc-url https://sepolia.base.org \
+  --address 0xYourContract \
+  --from-block latest
+```
+
+#### Integration Checklist
+
+Before going to production, verify:
+
+- [ ] Contract deployed and verified on block explorer
+- [ ] ABI file placed in `abi/TokenMintWith3009.json`
+- [ ] Contract address matches in both hooks.toml definition and mapping
+- [ ] Function signature exactly matches contract ABI
+- [ ] All 8 parameters configured with correct types and sources
+- [ ] Hook tested successfully on testnet
+- [ ] Gas limit verified (estimate + 20% buffer)
+- [ ] `allow_hook_failure = false` for production safety
+- [ ] Transaction monitoring set up to catch hook failures
+- [ ] Facilitator logs configured to capture hook execution
+
+#### Next Steps
+
+- Review Example 2 for simpler settlement notifications
+- See "Security Considerations" section for production best practices
+- Read "Advanced Topics" for multiple hooks and conditional execution
 
 ### Example 2: Simple Settlement Notification
 

@@ -28,35 +28,9 @@ Save your hook contract ABI to `abi/hooks/YourHook.json`:
 ]
 ```
 
-### 2. Encode Calldata
+### 2. Configure hooks.toml
 
-Use Alloy or similar to encode the calldata for your hook function:
-
-```rust
-// Example with Alloy
-use alloy::sol;
-
-sol! {
-    function notifySettlement(address from, address to, uint256 amount);
-}
-
-let calldata = notifySettlementCall {
-    from: Address::ZERO,
-    to: Address::ZERO,
-    amount: U256::ZERO,
-}.abi_encode();
-
-println!("0x{}", hex::encode(calldata));
-```
-
-Or use cast:
-```bash
-cast calldata "notifySettlement(address,address,uint256)" 0x0000000000000000000000000000000000000000 0x0000000000000000000000000000000000000000 0
-```
-
-### 3. Configure hooks.toml
-
-Edit `hooks.toml`:
+Edit `hooks.toml` to define your hook with parameterized calldata:
 
 ```toml
 [hooks]
@@ -71,11 +45,28 @@ allow_hook_failure = false
 enabled = true
 description = "Notifies contract when settlement occurs"
 contract = "0xYourHookContractAddress"
-calldata = "0xYourEncodedCalldata"  # From step 2
+function_signature = "notifySettlement(address,address,uint256)"
 gas_limit = 100000
+
+# Parameter 1: from (payer address)
+[[hooks.definitions.notify_settlement.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+# Parameter 2: to (recipient address)
+[[hooks.definitions.notify_settlement.parameters]]
+type = "address"
+source = { source_type = "payment", field = "to" }
+
+# Parameter 3: amount (transfer value)
+[[hooks.definitions.notify_settlement.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
 ```
 
-### 4. Start Server
+The facilitator will automatically encode the calldata at runtime using the payment data from each settlement.
+
+### 3. Start Server
 
 ```bash
 cargo run --release
@@ -203,16 +194,19 @@ With 2 hooks per settlement and max_batch_size=150:
 1. Check `hooks.toml` exists and is valid TOML
 2. Verify `enabled = true` in both `[hooks]` and hook definition
 3. Check destination address is mapped correctly
-4. Verify calldata is hex-encoded with `0x` prefix
-5. Check server logs for errors
+4. Verify function signature matches contract ABI
+5. Ensure all parameters are configured with correct types
+6. Check server logs for errors
 
 ### Hook Failing
 
 1. Check gas limit is sufficient
 2. Verify contract address is correct
-3. Test calldata encoding independently
-4. Check if `allow_hook_failure = false` is causing batch revert
-5. Monitor transaction revert reasons on block explorer
+3. Verify function signature exactly matches contract
+4. Check parameter types match Solidity function
+5. Ensure parameter sources are valid (payment/runtime/config/static)
+6. Check if `allow_hook_failure = false` is causing batch revert
+7. Monitor transaction revert reasons on block explorer
 
 ### Hot Reload Not Working
 
@@ -235,7 +229,8 @@ INFO processing sub-batch batch_size=1 total_call3s=3
 
 - [ ] Hook contract is trusted and audited
 - [ ] ABI file is correct and complete
-- [ ] Calldata is properly encoded
+- [ ] Function signature exactly matches contract ABI
+- [ ] All parameters configured with correct types and sources
 - [ ] Gas limit is reasonable (not too high to prevent DoS)
 - [ ] `allow_hook_failure` is set appropriately for your use case
 - [ ] Admin API key is strong and secret

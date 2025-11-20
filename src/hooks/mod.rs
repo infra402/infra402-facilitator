@@ -13,15 +13,11 @@
 //!
 //! ## Usage
 //!
-//! ### Legacy Static Hooks
-//! 1. Define hooks in `hooks.toml` with contract address and static calldata
-//! 2. Map destination addresses to hooks
-//! 3. When settlement is sent to mapped destination, hooks execute atomically
-//!
-//! ### New Parameterized Hooks
-//! 1. Define hooks with `function_signature` and `parameters`
+//! 1. Define hooks in `hooks.toml` with `function_signature` and `parameters`
 //! 2. Parameters can extract values from EIP-3009 payment, runtime context, or static config
-//! 3. Calldata is dynamically encoded at settlement time
+//! 3. Map destination addresses to hooks
+//! 4. When settlement is sent to mapped destination, hooks execute atomically
+//! 5. Calldata is dynamically encoded at settlement time
 //!
 //! ## Security
 //!

@@ -96,72 +96,9 @@ impl HookManager {
         Ok(())
     }
 
-    /// Get hooks for a specific destination address (LEGACY - uses static calldata)
-    ///
-    /// Returns all enabled hooks mapped to this destination, or empty vec if none.
-    /// This method is kept for backward compatibility and uses static calldata.
-    pub async fn get_hooks_for_destination(&self, destination: Address) -> Vec<HookCall> {
-        let state = self.state.read().await;
-
-        // If hooks disabled globally, return empty
-        if !state.enabled {
-            return Vec::new();
-        }
-
-        // Look up hooks mapped to this destination
-        let hook_names = match state.mappings.get(&destination) {
-            Some(names) => names,
-            None => return Vec::new(),
-        };
-
-        // Resolve each hook name to its definition
-        let mut hooks = Vec::new();
-        for name in hook_names {
-            if let Some(def) = state.definitions.get(name) {
-                // Only include if hook is enabled
-                if def.enabled {
-                    // Legacy mode: require static calldata
-                    if let Some(calldata) = &def.calldata {
-                        hooks.push(HookCall {
-                            target: def.contract,
-                            calldata: calldata.clone(),
-                            gas_limit: def.gas_limit,
-                            allow_failure: state.allow_hook_failure,
-                        });
-                    } else {
-                        tracing::warn!(
-                            hook = name,
-                            "Hook has no static calldata, skipping in legacy mode. \
-                             Use get_hooks_for_destination_with_context for parameterized hooks."
-                        );
-                    }
-                } else {
-                    tracing::debug!(hook = name, "Skipping disabled hook");
-                }
-            } else {
-                tracing::warn!(
-                    hook = name,
-                    destination = %destination,
-                    "Hook referenced in mapping but not found in definitions"
-                );
-            }
-        }
-
-        if !hooks.is_empty() {
-            tracing::debug!(
-                destination = %destination,
-                hooks_count = hooks.len(),
-                "Retrieved hooks for destination (legacy mode)"
-            );
-        }
-
-        hooks
-    }
-
     /// Get hooks for a specific destination with runtime parameter resolution
     ///
     /// Returns all enabled hooks mapped to this destination with dynamically encoded calldata.
-    /// Supports both legacy static calldata and new parameterized hooks.
     pub async fn get_hooks_for_destination_with_context(
         &self,
         destination: Address,
@@ -296,11 +233,11 @@ impl HookManager {
 mod tests {
     use super::*;
     use alloy::primitives::{address, U256};
-    use crate::hooks::config::{ParameterDefinition, ParameterSource, PaymentField};
 
     #[tokio::test]
     async fn test_hook_manager_no_hooks() {
         use super::super::config::*;
+        use crate::chain::evm::SettlementMetadata;
 
         // Create temporary config with no mappings
         let config = HookConfig {
@@ -316,9 +253,34 @@ mod tests {
         config.to_file(temp_path).unwrap();
 
         let manager = HookManager::new(temp_path).unwrap();
+
+        // Create test metadata and runtime context
+        let metadata = SettlementMetadata {
+            from: address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            to: address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            value: U256::from(1000000),
+            valid_after: U256::ZERO,
+            valid_before: U256::MAX,
+            nonce: alloy::primitives::FixedBytes::ZERO,
+            signature: alloy::primitives::Bytes::new(),
+            contract_address: address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
+            sig_kind: "eoa".to_string(),
+        };
+
+        let runtime = RuntimeContext::new(
+            U256::from(1234567890),
+            U256::from(100),
+            address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"),
+        );
+
         let hooks = manager
-            .get_hooks_for_destination(address!("0x2222222222222222222222222222222222222222"))
-            .await;
+            .get_hooks_for_destination_with_context(
+                address!("0x2222222222222222222222222222222222222222"),
+                &metadata,
+                &runtime,
+            )
+            .await
+            .unwrap();
 
         assert_eq!(hooks.len(), 0);
     }
@@ -349,8 +311,7 @@ mod tests {
             HookDefinition {
                 enabled: true,
                 contract: address!("0x1234567890123456789012345678901234567890"),
-                calldata: None,
-                function_signature: Some("notifySettlement(address,address,uint256)".to_string()),
+                function_signature: "notifySettlement(address,address,uint256)".to_string(),
                 parameters,
                 config_values: HashMap::new(),
                 gas_limit: 100000,

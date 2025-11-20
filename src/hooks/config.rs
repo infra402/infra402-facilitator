@@ -89,15 +89,8 @@ pub struct HookDefinition {
     /// Target contract address for the hook call
     pub contract: Address,
 
-    // Legacy static calldata (deprecated but supported for backward compatibility)
-    /// Pre-configured static calldata (deprecated - use function_signature + parameters)
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "hex_option")]
-    pub calldata: Option<Bytes>,
-
-    // New parameterized approach
     /// Function signature for ABI encoding (e.g., "notifySettlement(address,address,uint256)")
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub function_signature: Option<String>,
+    pub function_signature: String,
 
     /// Ordered parameter definitions matching function signature
     #[serde(default)]
@@ -117,29 +110,12 @@ pub struct HookDefinition {
 
 impl HookDefinition {
     /// Encode calldata with runtime parameter resolution
-    ///
-    /// Supports both legacy static calldata and new parameterized hooks.
     pub fn encode_calldata(
         &self,
         metadata: &SettlementMetadata,
         runtime: &RuntimeContext,
     ) -> HookResult<Bytes> {
-        // Legacy mode: use static calldata if present
-        if let Some(static_calldata) = &self.calldata {
-            if self.function_signature.is_some() {
-                tracing::warn!(
-                    "Hook has both static calldata and function_signature defined. \
-                     Using static calldata (deprecated). Consider migrating to parameterized hooks."
-                );
-            }
-            return Ok(static_calldata.clone());
-        }
-
-        // Parameterized mode: require function signature
-        let function_sig = self.function_signature.as_ref()
-            .ok_or_else(|| HookError::ConfigError(
-                "Hook must have either 'calldata' or 'function_signature'".to_string()
-            ))?;
+        let function_sig = &self.function_signature;
 
         // Parse function signature to get selector and input types
         let (function_name, input_types) = Self::parse_function_signature(function_sig)?;
@@ -435,40 +411,31 @@ impl HookDefinition {
 
     /// Validate hook configuration
     pub fn validate(&self) -> HookResult<()> {
-        // Must have either calldata or function_signature
-        if self.calldata.is_none() && self.function_signature.is_none() {
-            return Err(HookError::ConfigError(
-                "Hook must have either 'calldata' or 'function_signature'".to_string()
-            ));
+        // Validate function signature
+        let (_, input_types) = Self::parse_function_signature(&self.function_signature)?;
+
+        if self.parameters.len() != input_types.len() {
+            return Err(HookError::ParameterCountMismatch {
+                function: self.function_signature.clone(),
+                expected: input_types.len(),
+                actual: self.parameters.len(),
+            });
         }
 
-        // If using function_signature, validate it
-        if let Some(sig) = &self.function_signature {
-            let (_, input_types) = Self::parse_function_signature(sig)?;
+        // Validate each parameter type
+        for (i, param) in self.parameters.iter().enumerate() {
+            DynSolType::parse(&param.sol_type)
+                .map_err(|e| HookError::InvalidSolidityType(
+                    param.sol_type.clone(),
+                    e.to_string()
+                ))?;
 
-            if self.parameters.len() != input_types.len() {
-                return Err(HookError::ParameterCountMismatch {
-                    function: sig.clone(),
-                    expected: input_types.len(),
-                    actual: self.parameters.len(),
+            if param.sol_type != input_types[i] {
+                return Err(HookError::TypeMismatch {
+                    param: format!("parameter {}", i),
+                    expected: input_types[i].clone(),
+                    actual: param.sol_type.clone(),
                 });
-            }
-
-            // Validate each parameter type
-            for (i, param) in self.parameters.iter().enumerate() {
-                DynSolType::parse(&param.sol_type)
-                    .map_err(|e| HookError::InvalidSolidityType(
-                        param.sol_type.clone(),
-                        e.to_string()
-                    ))?;
-
-                if param.sol_type != input_types[i] {
-                    return Err(HookError::TypeMismatch {
-                        param: format!("parameter {}", i),
-                        expected: input_types[i].clone(),
-                        actual: param.sol_type.clone(),
-                    });
-                }
             }
         }
 
@@ -515,39 +482,6 @@ impl Default for HookSettings {
 fn default_true() -> bool {
     true
 }
-
-/// Hex serialization module for Option<Bytes>
-mod hex_option {
-    use alloy::primitives::Bytes;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &Option<Bytes>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match bytes {
-            Some(b) => serializer.serialize_str(&format!("0x{}", alloy::hex::encode(b))),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Bytes>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s: Option<String> = Option::deserialize(deserializer)?;
-        match s {
-            Some(s) => {
-                let s = s.strip_prefix("0x").unwrap_or(&s);
-                alloy::hex::decode(s)
-                    .map(|b| Some(Bytes::from(b)))
-                    .map_err(serde::de::Error::custom)
-            }
-            None => Ok(None),
-        }
-    }
-}
-
 impl HookConfig {
     /// Load hook configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -574,32 +508,6 @@ impl HookConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
-
-    #[test]
-    fn test_legacy_hook_config_parsing() {
-        let toml = r#"
-[hooks]
-enabled = true
-allow_hook_failure = false
-
-[hooks.mappings]
-"0x4444444444444444444444444444444444444444" = ["test_hook"]
-
-[hooks.definitions.test_hook]
-enabled = true
-contract = "0x1234567890123456789012345678901234567890"
-calldata = "0xabcdef"
-gas_limit = 300000
-description = "Test hook"
-"#;
-
-        let config: HookConfig = toml::from_str(toml).unwrap();
-        assert!(config.hooks.enabled);
-        assert!(!config.hooks.allow_hook_failure);
-        assert_eq!(config.hooks.mappings.len(), 1);
-        assert_eq!(config.hooks.definitions.len(), 1);
-    }
 
     #[test]
     fn test_parameterized_hook_config_parsing() {
@@ -634,7 +542,7 @@ source = { source_type = "payment", field = "value" }
         assert!(config.hooks.enabled);
 
         let hook = config.hooks.definitions.get("notify_hook").unwrap();
-        assert_eq!(hook.function_signature.as_ref().unwrap(), "notifySettlement(address,address,uint256)");
+        assert_eq!(&hook.function_signature, "notifySettlement(address,address,uint256)");
         assert_eq!(hook.parameters.len(), 3);
     }
 

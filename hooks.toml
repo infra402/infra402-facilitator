@@ -25,7 +25,7 @@ allow_hook_failure = false
 # ============================================================================
 # Define hooks here. Each hook specifies a contract to call and parameters to pass.
 #
-# For parameterized hooks (recommended):
+# Hook format:
 #   enabled = true/false
 #   description = "What this hook does"
 #   contract = "0xContractAddress"
@@ -36,8 +36,8 @@ allow_hook_failure = false
 #     source = { source_type = "payment|runtime|config|static", field = "..." }
 #
 # See docs/HOOKS_IMPLEMENTATION.md for complete examples including:
-#   - TokenMintWith3009 EIP-3009 callback
-#   - Settlement notifications
+#   - TokenMintWith3009 EIP-3009 callback (complete step-by-step guide)
+#   - Simple settlement notifications
 #   - Runtime context usage
 #   - Config values and static parameters
 #   - Batch tracking
