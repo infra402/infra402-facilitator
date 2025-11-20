@@ -229,15 +229,15 @@ jq '.[] | select(.name == "onPaymentReceived")' abi/TokenMintWith3009.json
 
 #### Step 3: Configure Hook in hooks.toml
 
-**3.1 Add Hook Definition**
+**3.1 Add Hook Definition (Shared Across Networks)**
 
-Edit `/hooks.toml` and add your hook:
+Edit `hooks.toml` and add your hook definition (without contract address):
 
 ```toml
+# Hook definitions are shared across all networks
 [hooks.definitions.token_mint_callback]
 enabled = true
 description = "Calls onPaymentReceived with EIP-3009 authorization parameters"
-contract = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"  # Your deployed contract address
 function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
 gas_limit = 200000  # Adjust based on your contract's gas usage
 
@@ -282,18 +282,39 @@ type = "bytes32"
 source = { source_type = "payment", field = "signatures" }
 ```
 
-**3.2 Add Recipient Mapping**
+**3.2 Configure Per-Network Settings**
 
-Map your contract address to the hook:
+Add network-specific configuration for Base Sepolia (testnet):
 
 ```toml
-[hooks.mappings]
+# Base Sepolia testnet configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+# Recipient address → hook names mapping for this network
+[hooks.networks.base-sepolia.mappings]
 "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["token_mint_callback"]
+
+# Hook name → contract address mapping for this network
+[hooks.networks.base-sepolia.contracts]
+# Option 1: Use environment variable (recommended for testing)
+token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT}"
+# Option 2: Hardcode address (for production)
+# token_mint_callback = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 ```
 
-**Important**: The recipient address in mappings should match the contract address where payments will be sent.
+**Important**: The recipient address in mappings should match where payments will be sent (often the token contract or a payment receiver).
 
-**3.3 Enable Hooks Globally**
+**3.3 Set Environment Variable (If Using Env Vars)**
+
+Add to your `.env` file (not committed to git):
+
+```bash
+# Hook contract addresses for Base Sepolia
+HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+```
+
+**3.4 Enable Hooks Globally**
 
 Ensure hooks are enabled at the top of `hooks.toml`:
 
@@ -301,6 +322,22 @@ Ensure hooks are enabled at the top of `hooks.toml`:
 [hooks]
 enabled = true
 allow_hook_failure = false  # Recommended: hooks must succeed
+```
+
+**3.5 Production Configuration Example**
+
+For mainnet, you might hardcode addresses:
+
+```toml
+# Base mainnet configuration
+[hooks.networks.base]
+enabled = true
+
+[hooks.networks.base.mappings]
+"0xProductionRecipientAddress" = ["token_mint_callback"]
+
+[hooks.networks.base.contracts]
+token_mint_callback = "0xProductionContractAddress"  # Hardcoded for production
 ```
 
 #### Step 4: Test the Hook
