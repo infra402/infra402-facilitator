@@ -1,10 +1,19 @@
 # Token Configuration
 #
 # This file defines ERC-3009 compatible payment tokens supported by the facilitator.
-# Production token addresses are hardcoded here for git-committability.
-# Test/development tokens can be added via environment variables.
+# Production token addresses are committed to git.
+#
+# Custom/test tokens can be added via a separate tokens-custom.toml file (gitignored).
+# To enable custom tokens, uncomment and set the path below:
+#
+# custom_tokens_file = "tokens-custom.toml"  # Relative or absolute path
+#
+# See tokens-custom.toml.example for the custom token file format.
 
 [tokens]
+# Optional: Path to custom tokens file (disabled by default)
+# custom_tokens_file = "tokens-custom.toml"
+
 # Global token definitions (shared across all networks)
 
 # USD Coin (USDC) - Primary stablecoin for most networks
@@ -80,33 +89,3 @@ usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 # Solana Devnet (Note: Non-EVM, included for completeness)
 [tokens.networks.solana-devnet]
 usdc = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
-
-# ============================================================================
-# Custom/Additional Tokens (environment variables)
-# ============================================================================
-# Use these sections to ADD custom tokens via .env file.
-# IMPORTANT: Custom tokens must use NEW addresses not already in production.
-# Custom tokens CANNOT override/replace production token addresses.
-#
-# Example usage in .env:
-#   TEST_USDC_BASE_SEPOLIA=0xYourTestUSDCAddress
-#   CUSTOM_TOKEN_BASE_SEPOLIA=0xYourCustomERC3009Token
-#
-# Then reference in tokens.toml:
-#   [tokens.networks.base-sepolia.custom]
-#   test_usdc = "${TEST_USDC_BASE_SEPOLIA}"
-#   custom_token = "${CUSTOM_TOKEN_BASE_SEPOLIA}"
-#
-# Note: If a custom token uses the same address as a production token,
-#       the configuration will fail to load with a conflict error.
-
-# Example: Base Sepolia custom tokens
-[tokens.networks.base-sepolia.custom]
-# Uncomment and set env vars to add custom tokens:
-# test_usdc = "${TEST_USDC_BASE_SEPOLIA}"
-# custom_token = "${CUSTOM_TOKEN_BASE_SEPOLIA}"
-
-# Example: BSC Testnet custom tokens
-[tokens.networks.bsc-testnet.custom]
-# test_usdc = "${TEST_USDC_BSC_TESTNET}"
-# test_xbnb = "${TEST_XBNB_BSC_TESTNET}"

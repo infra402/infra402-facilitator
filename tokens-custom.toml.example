@@ -1,0 +1,57 @@
+# Custom Token Configuration Example
+#
+# Copy this file to tokens-custom.toml and customize with your test/development tokens.
+# The tokens-custom.toml file is gitignored to keep local test configurations private.
+#
+# IMPORTANT:
+# - Custom tokens CANNOT use the same address as production tokens
+# - Address conflicts will cause the application to fail at startup with a clear error
+# - Custom tokens use direct addresses only (no environment variable substitution)
+#
+# To enable custom tokens:
+# 1. Copy this file: cp tokens-custom.toml.example tokens-custom.toml
+# 2. Edit tokens-custom.toml with your test token addresses
+# 3. Uncomment custom_tokens_file in tokens.toml
+
+[tokens]
+
+# ============================================================================
+# Custom Token Definitions
+# ============================================================================
+# Define metadata for your custom tokens here.
+# These definitions can override or extend the production definitions.
+
+[tokens.definitions.test_usdc]
+symbol = "TestUSDC"
+name = "Test USD Coin"
+decimals = 6
+eip712_name = "Test USD Coin"
+eip712_version = "2"
+contract_type = "usdc"
+
+[tokens.definitions.test_xbnb]
+symbol = "TestXBNB"
+name = "Test x402 BNB"
+decimals = 18
+eip712_name = "Test x402 BNB"
+eip712_version = "1"
+contract_type = "xbnb"
+
+# ============================================================================
+# Custom Token Deployments (network-specific addresses)
+# ============================================================================
+# Map custom tokens to specific network addresses.
+# Use DIFFERENT addresses than production tokens.
+
+# Base Sepolia testnet custom tokens
+[tokens.networks.base-sepolia]
+test_usdc = "0x1111111111111111111111111111111111111111"  # Replace with your test USDC address
+# my_custom_token = "0x2222222222222222222222222222222222222222"
+
+# BSC Testnet custom tokens
+[tokens.networks.bsc-testnet]
+test_xbnb = "0x3333333333333333333333333333333333333333"  # Replace with your test XBNB address
+
+# Add custom tokens for other networks as needed
+# [tokens.networks.polygon-amoy]
+# test_usdc = "0x4444444444444444444444444444444444444444"
