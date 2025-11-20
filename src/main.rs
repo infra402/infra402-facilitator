@@ -50,6 +50,7 @@ mod security;
 mod sig_down;
 mod telemetry;
 mod timestamp;
+mod tokens;
 mod types;
 
 /// Initializes the x402 facilitator server.

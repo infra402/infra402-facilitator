@@ -445,6 +445,27 @@ impl HookDefinition {
     }
 }
 
+/// Token filter configuration for hooks
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum TokenFilter {
+    /// Wildcard: Accept any token
+    Any(String),  // "*"
+    /// Specific token names from tokens.toml
+    Specific(Vec<String>),
+}
+
+impl TokenFilter {
+    /// Check if a token name passes this filter
+    pub fn matches(&self, token_name: &str) -> bool {
+        match self {
+            TokenFilter::Any(s) if s == "*" => true,
+            TokenFilter::Specific(tokens) => tokens.contains(&token_name.to_string()),
+            _ => false,
+        }
+    }
+}
+
 /// Per-network hook configuration
 ///
 /// Specifies which hooks are active for a specific network,
@@ -466,6 +487,13 @@ pub struct NetworkHookConfig {
     /// Supports environment variable substitution: "${ENV_VAR_NAME}"
     #[serde(default)]
     pub contracts: HashMap<String, String>,
+
+    /// Token filters: Restrict hooks to specific payment tokens
+    /// Maps hook_name → token filter (wildcard "*" or list of token names)
+    /// If a hook is not listed, it accepts all tokens (same as "*")
+    /// Token names must match those defined in tokens.toml
+    #[serde(default)]
+    pub token_filters: HashMap<String, TokenFilter>,
 }
 
 /// Complete hook configuration loaded from hooks.toml

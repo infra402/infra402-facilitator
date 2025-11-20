@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::chain::evm::SettlementMetadata;
+use crate::tokens::TokenManager;
 use super::config::{HookConfig, HookDefinition};
 use super::context::RuntimeContext;
 use super::errors::HookError;
@@ -38,6 +39,8 @@ pub struct HookManager {
     config_path: String,
     /// Hot-reloadable state
     state: Arc<RwLock<HookState>>,
+    /// Token manager for resolving token names from addresses
+    token_manager: Option<TokenManager>,
 }
 
 impl HookManager {
@@ -57,6 +60,30 @@ impl HookManager {
         Ok(Self {
             config_path: config_path.to_string(),
             state: Arc::new(RwLock::new(state)),
+            token_manager: None,
+        })
+    }
+
+    /// Create a new HookManager with token filtering support
+    pub fn new_with_tokens(
+        config_path: &str,
+        token_manager: TokenManager,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let config = HookConfig::from_file(config_path)?;
+
+        let state = config.hooks;
+
+        tracing::info!(
+            path = config_path,
+            hooks_count = state.definitions.len(),
+            networks_count = state.networks.len(),
+            "Initialized HookManager with token filtering"
+        );
+
+        Ok(Self {
+            config_path: config_path.to_string(),
+            state: Arc::new(RwLock::new(state)),
+            token_manager: Some(token_manager),
         })
     }
 
@@ -81,15 +108,18 @@ impl HookManager {
     /// Get hooks for a specific destination with runtime parameter resolution
     ///
     /// Returns all enabled hooks mapped to this destination with dynamically encoded calldata.
+    /// Filters hooks based on token_filters configuration if TokenManager is available.
     ///
     /// # Arguments
     /// * `destination` - Recipient address to check for hooks
+    /// * `token_address` - Payment token contract address for filtering
     /// * `network` - Network name (e.g., "base_sepolia", "base")
     /// * `metadata` - Settlement metadata for parameter resolution
     /// * `runtime` - Runtime context for parameter resolution
     pub async fn get_hooks_for_destination_with_context(
         &self,
         destination: Address,
+        token_address: Address,
         network: &str,
         metadata: &SettlementMetadata,
         runtime: &RuntimeContext,
@@ -127,6 +157,16 @@ impl HookManager {
             None => return Ok(Vec::new()),
         };
 
+        // Resolve token name from address for filtering (if TokenManager available)
+        let token_name: Option<String> = if let Some(ref token_mgr) = self.token_manager {
+            token_mgr.get_token_name(token_address, network).await
+        } else {
+            None
+        };
+
+        // Get network-specific config for token filters
+        let network_config = state.networks.get(network);
+
         // Resolve each hook name to its definition and encode calldata
         let mut hooks = Vec::new();
         for name in hook_names {
@@ -134,6 +174,30 @@ impl HookManager {
                 if !def.enabled {
                     tracing::debug!(hook = name, network = network, "Skipping disabled hook");
                     continue;
+                }
+
+                // Check token filter if token filtering is configured
+                if let (Some(token_name_val), Some(network_cfg)) = (token_name.as_ref(), network_config) {
+                    if let Some(filter) = network_cfg.token_filters.get(name) {
+                        if !filter.matches(token_name_val) {
+                            tracing::debug!(
+                                hook = name,
+                                token = token_name_val,
+                                network = network,
+                                "Skipping hook due to token filter"
+                            );
+                            continue;
+                        }
+                    }
+                    // If no filter specified for this hook, allow all tokens (default behavior)
+                } else if token_name.is_none() && self.token_manager.is_some() {
+                    // TokenManager is available but token not recognized - log warning
+                    tracing::warn!(
+                        token_address = %token_address,
+                        network = network,
+                        hook = name,
+                        "Token address not recognized in tokens.toml, allowing hook"
+                    );
                 }
 
                 // Resolve contract address for this network
@@ -305,6 +369,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x2222222222222222222222222222222222222222"),
+                address!("0x0000000000000000000000000000000000000000"),  // Dummy token address
                 "base_sepolia",
                 &metadata,
                 &runtime,
@@ -368,6 +433,7 @@ mod tests {
                 enabled: Some(true),
                 mappings: network_mappings,
                 contracts: network_contracts,
+                token_filters: HashMap::new(),
             },
         );
 
@@ -408,6 +474,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x3333333333333333333333333333333333333333"),
+                address!("0x0000000000000000000000000000000000000000"),  // Dummy token address
                 "base_sepolia",
                 &metadata,
                 &runtime,

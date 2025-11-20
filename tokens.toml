@@ -1,0 +1,112 @@
+# Token Configuration
+#
+# This file defines ERC-3009 compatible payment tokens supported by the facilitator.
+# Production token addresses are hardcoded here for git-committability.
+# Test/development tokens can be added via environment variables.
+
+[tokens]
+# Global token definitions (shared across all networks)
+
+# USD Coin (USDC) - Primary stablecoin for most networks
+[tokens.definitions.usdc]
+symbol = "USDC"
+name = "USD Coin"
+decimals = 6
+eip712_name = "USD Coin"
+eip712_version = "2"
+contract_type = "usdc"  # Uses USDC ABI variant
+
+# x402 BNB (XBNB) - Wrapped BNB for BSC networks
+[tokens.definitions.xbnb]
+symbol = "XBNB"
+name = "x402 BNB"
+decimals = 18
+eip712_name = "x402 BNB"
+eip712_version = "1"
+contract_type = "xbnb"  # Uses XBNB ABI variant
+
+# ============================================================================
+# Production Token Deployments (hardcoded addresses)
+# ============================================================================
+
+# Base Sepolia Testnet
+[tokens.networks.base-sepolia]
+usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+
+# Base Mainnet
+[tokens.networks.base]
+usdc = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+# XDC Network
+[tokens.networks.xdc]
+usdc = "0x2A8E898b6242355c290E1f4Fc966b8788729A4D4"
+
+# Avalanche Fuji Testnet
+[tokens.networks.avalanche-fuji]
+usdc = "0x5425890298aed601595a70AB815c96711a31Bc65"
+
+# Avalanche Mainnet
+[tokens.networks.avalanche]
+usdc = "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+
+# Polygon Amoy Testnet
+[tokens.networks.polygon-amoy]
+usdc = "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582"
+
+# Polygon Mainnet
+[tokens.networks.polygon]
+usdc = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+
+# Sei Mainnet
+[tokens.networks.sei]
+usdc = "0xe15fC38F6D8c56aF07bbCBe3BAf5708A2Bf42392"
+
+# Sei Testnet
+[tokens.networks.sei-testnet]
+usdc = "0x4fCF1784B31630811181f670Aea7A7bEF803eaED"
+
+# BSC Testnet
+[tokens.networks.bsc-testnet]
+xbnb = "0x1E11fF9f392dAAbFB8823F210624194298FCF3E2"
+
+# BSC Mainnet
+[tokens.networks.bsc]
+xbnb = "0x1E11fF9f392dAAbFB8823F210624194298FCF3E2"
+
+# Solana Mainnet (Note: Non-EVM, included for completeness)
+[tokens.networks.solana]
+usdc = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+# Solana Devnet (Note: Non-EVM, included for completeness)
+[tokens.networks.solana-devnet]
+usdc = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+
+# ============================================================================
+# Custom/Additional Tokens (environment variables)
+# ============================================================================
+# Use these sections to ADD custom tokens via .env file.
+# IMPORTANT: Custom tokens must use NEW addresses not already in production.
+# Custom tokens CANNOT override/replace production token addresses.
+#
+# Example usage in .env:
+#   TEST_USDC_BASE_SEPOLIA=0xYourTestUSDCAddress
+#   CUSTOM_TOKEN_BASE_SEPOLIA=0xYourCustomERC3009Token
+#
+# Then reference in tokens.toml:
+#   [tokens.networks.base-sepolia.custom]
+#   test_usdc = "${TEST_USDC_BASE_SEPOLIA}"
+#   custom_token = "${CUSTOM_TOKEN_BASE_SEPOLIA}"
+#
+# Note: If a custom token uses the same address as a production token,
+#       the configuration will fail to load with a conflict error.
+
+# Example: Base Sepolia custom tokens
+[tokens.networks.base-sepolia.custom]
+# Uncomment and set env vars to add custom tokens:
+# test_usdc = "${TEST_USDC_BASE_SEPOLIA}"
+# custom_token = "${CUSTOM_TOKEN_BASE_SEPOLIA}"
+
+# Example: BSC Testnet custom tokens
+[tokens.networks.bsc-testnet.custom]
+# test_usdc = "${TEST_USDC_BSC_TESTNET}"
+# test_xbnb = "${TEST_XBNB_BSC_TESTNET}"

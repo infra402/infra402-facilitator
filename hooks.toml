@@ -94,3 +94,13 @@ enabled = true
 # Supports environment variable substitution: "${ENV_VAR_NAME}"
 [hooks.networks.base-sepolia.contracts]
 token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT}"
+
+# Token filters (optional): Restrict hooks to specific payment tokens
+# If not specified, hooks accept all tokens
+# Token names must match those defined in tokens.toml
+[hooks.networks.base-sepolia.token_filters]
+# Only trigger token_mint_callback for USDC payments
+token_mint_callback = ["usdc"]
+# Examples of other filter configurations:
+# multi_token_hook = ["usdc", "xbnb"]  # Accept multiple tokens
+# any_token_hook = "*"  # Accept any token (same as omitting filter)

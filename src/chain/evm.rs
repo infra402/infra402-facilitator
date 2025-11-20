@@ -1233,13 +1233,14 @@ impl EvmProvider {
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, network, &metadata, &runtime).await {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, contract_address, network, &metadata, &runtime).await {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
                                         error = %e,
                                         network = network,
                                         destination = %to,
+                                        token = %contract_address,
                                         "Hook parameter resolution failed, skipping hooks"
                                     );
                                     Vec::new()
@@ -1311,13 +1312,14 @@ impl EvmProvider {
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, network, &metadata, &runtime).await {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, contract_address, network, &metadata, &runtime).await {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
                                         error = %e,
                                         network = network,
                                         destination = %to,
+                                        token = %contract_address,
                                         "Hook parameter resolution failed, skipping hooks"
                                     );
                                     Vec::new()
