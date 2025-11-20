@@ -1,20 +1,24 @@
 //! Hook manager with hot-reload capability
 //!
 //! Manages post-settlement hooks with thread-safe hot-reloading via Arc<RwLock>.
+//! Supports both legacy static calldata and new parameterized hooks.
 
 use alloy::primitives::{Address, Bytes};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::chain::evm::SettlementMetadata;
 use super::config::{HookConfig, HookDefinition};
+use super::context::RuntimeContext;
+use super::errors::HookError;
 
 /// Runtime hook call specification
 #[derive(Debug, Clone)]
 pub struct HookCall {
     /// Target contract address
     pub target: Address,
-    /// Pre-configured calldata
+    /// Pre-configured or dynamically encoded calldata
     pub calldata: Bytes,
     /// Gas limit (0 = unlimited)
     pub gas_limit: u64,
@@ -92,9 +96,10 @@ impl HookManager {
         Ok(())
     }
 
-    /// Get hooks for a specific destination address
+    /// Get hooks for a specific destination address (LEGACY - uses static calldata)
     ///
     /// Returns all enabled hooks mapped to this destination, or empty vec if none.
+    /// This method is kept for backward compatibility and uses static calldata.
     pub async fn get_hooks_for_destination(&self, destination: Address) -> Vec<HookCall> {
         let state = self.state.read().await;
 
@@ -115,12 +120,21 @@ impl HookManager {
             if let Some(def) = state.definitions.get(name) {
                 // Only include if hook is enabled
                 if def.enabled {
-                    hooks.push(HookCall {
-                        target: def.contract,
-                        calldata: def.calldata.clone(),
-                        gas_limit: def.gas_limit,
-                        allow_failure: state.allow_hook_failure,
-                    });
+                    // Legacy mode: require static calldata
+                    if let Some(calldata) = &def.calldata {
+                        hooks.push(HookCall {
+                            target: def.contract,
+                            calldata: calldata.clone(),
+                            gas_limit: def.gas_limit,
+                            allow_failure: state.allow_hook_failure,
+                        });
+                    } else {
+                        tracing::warn!(
+                            hook = name,
+                            "Hook has no static calldata, skipping in legacy mode. \
+                             Use get_hooks_for_destination_with_context for parameterized hooks."
+                        );
+                    }
                 } else {
                     tracing::debug!(hook = name, "Skipping disabled hook");
                 }
@@ -137,11 +151,92 @@ impl HookManager {
             tracing::debug!(
                 destination = %destination,
                 hooks_count = hooks.len(),
-                "Retrieved hooks for destination"
+                "Retrieved hooks for destination (legacy mode)"
             );
         }
 
         hooks
+    }
+
+    /// Get hooks for a specific destination with runtime parameter resolution
+    ///
+    /// Returns all enabled hooks mapped to this destination with dynamically encoded calldata.
+    /// Supports both legacy static calldata and new parameterized hooks.
+    pub async fn get_hooks_for_destination_with_context(
+        &self,
+        destination: Address,
+        metadata: &SettlementMetadata,
+        runtime: &RuntimeContext,
+    ) -> Result<Vec<HookCall>, HookError> {
+        let state = self.state.read().await;
+
+        // If hooks disabled globally, return empty
+        if !state.enabled {
+            return Ok(Vec::new());
+        }
+
+        // Look up hooks mapped to this destination
+        let hook_names = match state.mappings.get(&destination) {
+            Some(names) => names,
+            None => return Ok(Vec::new()),
+        };
+
+        // Resolve each hook name to its definition and encode calldata
+        let mut hooks = Vec::new();
+        for name in hook_names {
+            if let Some(def) = state.definitions.get(name) {
+                if !def.enabled {
+                    tracing::debug!(hook = name, "Skipping disabled hook");
+                    continue;
+                }
+
+                // Encode calldata with parameter resolution
+                match def.encode_calldata(metadata, runtime) {
+                    Ok(calldata) => {
+                        let calldata_len = calldata.len();
+
+                        hooks.push(HookCall {
+                            target: def.contract,
+                            calldata,
+                            gas_limit: def.gas_limit,
+                            allow_failure: state.allow_hook_failure,
+                        });
+
+                        tracing::debug!(
+                            hook = name,
+                            destination = %destination,
+                            calldata_len,
+                            "Encoded hook calldata"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            hook = name,
+                            destination = %destination,
+                            error = %e,
+                            "Failed to encode hook calldata"
+                        );
+                        return Err(e);
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    hook = name,
+                    destination = %destination,
+                    "Hook referenced in mapping but not found in definitions"
+                );
+            }
+        }
+
+        if !hooks.is_empty() {
+            tracing::info!(
+                destination = %destination,
+                hooks_count = hooks.len(),
+                "Retrieved hooks for destination with parameter resolution"
+            );
+        }
+
+        Ok(hooks)
     }
 
     /// Enable a specific hook by name
@@ -189,18 +284,27 @@ impl HookManager {
         let state = self.state.read().await;
         state.enabled
     }
+
+    /// Get a specific hook definition by name (for debugging)
+    pub async fn get_hook(&self, name: &str) -> Option<HookDefinition> {
+        let state = self.state.read().await;
+        state.definitions.get(name).cloned()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy::primitives::{address, U256};
+    use crate::hooks::config::{ParameterDefinition, ParameterSource, PaymentField};
 
     #[tokio::test]
     async fn test_hook_manager_no_hooks() {
+        use super::super::config::*;
+
         // Create temporary config with no mappings
         let config = HookConfig {
-            hooks: super::super::config::HookSettings {
+            hooks: HookSettings {
                 enabled: true,
                 allow_hook_failure: false,
                 mappings: HashMap::new(),
@@ -213,9 +317,97 @@ mod tests {
 
         let manager = HookManager::new(temp_path).unwrap();
         let hooks = manager
-            .get_hooks_for_destination(address!("0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"))
+            .get_hooks_for_destination(address!("0x2222222222222222222222222222222222222222"))
             .await;
 
         assert_eq!(hooks.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_hook_manager_with_context() {
+        use super::super::config::*;
+        use crate::chain::evm::SettlementMetadata;
+
+        // Create a parameterized hook
+        let mut definitions = HashMap::new();
+        let mut parameters = Vec::new();
+        parameters.push(ParameterDefinition {
+            sol_type: "address".to_string(),
+            source: ParameterSource::Payment(PaymentField::From),
+        });
+        parameters.push(ParameterDefinition {
+            sol_type: "address".to_string(),
+            source: ParameterSource::Payment(PaymentField::To),
+        });
+        parameters.push(ParameterDefinition {
+            sol_type: "uint256".to_string(),
+            source: ParameterSource::Payment(PaymentField::Value),
+        });
+
+        definitions.insert(
+            "test_hook".to_string(),
+            HookDefinition {
+                enabled: true,
+                contract: address!("0x1234567890123456789012345678901234567890"),
+                calldata: None,
+                function_signature: Some("notifySettlement(address,address,uint256)".to_string()),
+                parameters,
+                config_values: HashMap::new(),
+                gas_limit: 100000,
+                description: "Test hook".to_string(),
+            },
+        );
+
+        let mut mappings = HashMap::new();
+        mappings.insert(
+            address!("0x3333333333333333333333333333333333333333"),
+            vec!["test_hook".to_string()],
+        );
+
+        let config = HookConfig {
+            hooks: HookSettings {
+                enabled: true,
+                allow_hook_failure: false,
+                mappings,
+                definitions,
+            },
+        };
+
+        let temp_path = "/tmp/test_hooks_parameterized.toml";
+        config.to_file(temp_path).unwrap();
+
+        let manager = HookManager::new(temp_path).unwrap();
+
+        // Create test metadata and runtime context
+        let metadata = SettlementMetadata {
+            from: address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            to: address!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            value: U256::from(1000000),
+            valid_after: U256::ZERO,
+            valid_before: U256::MAX,
+            nonce: alloy::primitives::FixedBytes::ZERO,
+            signature: Bytes::new(),  // Empty signature for testing
+            contract_address: address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
+            sig_kind: "eoa".to_string(),
+        };
+
+        let runtime = RuntimeContext::new(
+            U256::from(1234567890),
+            U256::from(100),
+            address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD"),
+        );
+
+        let hooks = manager
+            .get_hooks_for_destination_with_context(
+                address!("0x3333333333333333333333333333333333333333"),
+                &metadata,
+                &runtime,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].target, address!("0x1234567890123456789012345678901234567890"));
+        assert!(hooks[0].calldata.len() > 4); // Should have selector + encoded params
     }
 }

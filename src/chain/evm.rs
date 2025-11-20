@@ -45,7 +45,7 @@ use tracing_core::Level;
 use crate::chain::{FacilitatorLocalError, FromEnvByNetworkBuild, NetworkProviderOps};
 use crate::facilitator::Facilitator;
 use crate::from_env;
-use crate::hooks::{HookCall, HookManager};
+use crate::hooks::{HookCall, HookManager, RuntimeContext};
 use crate::network::{Network, USDCDeployment};
 use crate::timestamp::UnixTimestamp;
 use crate::types::{
@@ -1207,9 +1207,51 @@ impl EvmProvider {
                     None
                 };
 
-                // Lookup hooks for destination address
+                // Build metadata before hook lookup
+                let metadata = SettlementMetadata {
+                    from,
+                    to,
+                    value,
+                    valid_after,
+                    valid_before,
+                    nonce,
+                    signature,
+                    contract_address,
+                    sig_kind: if is_contract_deployed {
+                        "EIP6492.deployed".to_string()
+                    } else {
+                        "EIP6492.counterfactual".to_string()
+                    },
+                };
+
+                // Lookup hooks for destination address with parameterized resolution
                 let hooks = if let Some(hook_mgr) = hook_manager {
-                    hook_mgr.get_hooks_for_destination(to).await
+                    // Create runtime context for parameter resolution
+                    // Use first signer address as placeholder (actual sender determined at settlement time)
+                    let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+
+                    match RuntimeContext::from_provider(self.inner(), sender).await {
+                        Ok(runtime) => {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, &metadata, &runtime).await {
+                                Ok(hooks) => hooks,
+                                Err(e) => {
+                                    tracing::error!(
+                                        error = %e,
+                                        destination = %to,
+                                        "Hook parameter resolution failed, skipping hooks"
+                                    );
+                                    Vec::new()
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to fetch runtime context for hooks, skipping hooks"
+                            );
+                            Vec::new()
+                        }
+                    }
                 } else {
                     Vec::new()
                 };
@@ -1225,21 +1267,7 @@ impl EvmProvider {
                     network: self.chain().network(),
                     deployment,
                     hooks,
-                    metadata: SettlementMetadata {
-                        from,
-                        to,
-                        value,
-                        valid_after,
-                        valid_before,
-                        nonce,
-                        signature,
-                        contract_address,
-                        sig_kind: if is_contract_deployed {
-                            "EIP6492.deployed".to_string()
-                        } else {
-                            "EIP6492.counterfactual".to_string()
-                        },
-                    },
+                    metadata,
                 })
             }
             StructuredSignature::EIP1271(eip1271_signature) => {
@@ -1258,9 +1286,47 @@ impl EvmProvider {
                 let signature = transfer_call.signature.clone();
                 let contract_address = transfer_call.contract_address;
 
-                // Lookup hooks for destination address
+                // Build metadata before hook lookup
+                let metadata = SettlementMetadata {
+                    from,
+                    to,
+                    value,
+                    valid_after,
+                    valid_before,
+                    nonce,
+                    signature,
+                    contract_address,
+                    sig_kind: "EIP1271".to_string(),
+                };
+
+                // Lookup hooks for destination address with parameterized resolution
                 let hooks = if let Some(hook_mgr) = hook_manager {
-                    hook_mgr.get_hooks_for_destination(to).await
+                    // Create runtime context for parameter resolution
+                    // Use first signer address as placeholder (actual sender determined at settlement time)
+                    let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+
+                    match RuntimeContext::from_provider(self.inner(), sender).await {
+                        Ok(runtime) => {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, &metadata, &runtime).await {
+                                Ok(hooks) => hooks,
+                                Err(e) => {
+                                    tracing::error!(
+                                        error = %e,
+                                        destination = %to,
+                                        "Hook parameter resolution failed, skipping hooks"
+                                    );
+                                    Vec::new()
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to fetch runtime context for hooks, skipping hooks"
+                            );
+                            Vec::new()
+                        }
+                    }
                 } else {
                     Vec::new()
                 };
@@ -1276,17 +1342,7 @@ impl EvmProvider {
                     network: self.chain().network(),
                     deployment: None,
                     hooks,
-                    metadata: SettlementMetadata {
-                        from,
-                        to,
-                        value,
-                        valid_after,
-                        valid_before,
-                        nonce,
-                        signature,
-                        contract_address,
-                        sig_kind: "EIP1271".to_string(),
-                    },
+                    metadata,
                 })
             }
         }

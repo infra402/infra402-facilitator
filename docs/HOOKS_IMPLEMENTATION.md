@@ -1,244 +1,600 @@
-# Post-Settlement Hooks Implementation
+# Post-Settlement Hooks Implementation Guide
+
+This guide explains how to configure and use the post-settlement hook system in the x402 facilitator.
 
 ## Overview
 
-This implementation adds support for post-settlement hooks - custom contract calls that execute atomically with settlement transfers via Multicall3.
+Post-settlement hooks allow you to execute custom contract calls atomically with settlement transfers via Multicall3. This enables additional on-chain logic to run immediately after a payment is settled, all within the same transaction for atomicity.
 
-## Architecture
+## Hook Types
 
-### Option C: Hybrid Approach (Implemented)
+### Parameterized Hooks (Recommended)
 
-- **Whitelisted contracts**: All hooks must have ABIs in `abi/hooks/` directory
-- **Admin-controlled**: Hooks added manually through code + configuration
-- **Hot-reloadable mappings**: Destination→hook mappings can be updated via admin API without restart
-- **Call3-aware batching**: `max_batch_size` counts total Call3 structs (not settlement count)
-- **Configurable failure handling**: `allow_hook_failure` flag controls atomicity
+Dynamic calldata built from payment data, runtime context, or static values. Provides full access to EIP-3009 parameters and runtime information.
 
-## Components
+**Advantages:**
+- Type-safe parameter resolution
+- Access to full EIP-3009 authorization data
+- Runtime context (timestamps, block numbers, batch info)
+- Flexible parameter composition
 
-### 1. Hook Configuration (`src/hooks/config.rs`)
+### Legacy Static Hooks (Deprecated)
 
-Defines configuration structures and TOML parsing:
-- `HookDefinition`: Contract address, calldata, gas limit, enabled flag
-- `HookConfig`: Global settings, mappings, and hook definitions
-- Loads from `hooks.toml`
+Pre-encoded calldata that never changes. Simple but inflexible.
 
-### 2. Hook Manager (`src/hooks/manager.rs`)
+**Use only when:** You have completely static calldata with no dynamic values.
 
-Thread-safe manager with hot-reload capability:
-- `HookManager::new(config_path)`: Initialize from file
-- `reload()`: Hot-reload configuration without restart
-- `get_hooks_for_destination(address)`: Lookup hooks for recipient
-- `enable_hook(name)` / `disable_hook(name)`: Runtime control
-- Uses `Arc<RwLock<HookState>>` for concurrent access
+## Configuration Structure
 
-### 3. Admin API (`src/hooks/admin.rs`)
-
-REST endpoints requiring `X-Admin-Key` authentication:
-- `GET /admin/hooks`: List all hook definitions
-- `GET /admin/hooks/mappings`: List all destination mappings
-- `GET /admin/hooks/status`: Get hook system status
-- `POST /admin/hooks/reload`: Reload hooks.toml
-- `POST /admin/hooks/:name/enable`: Enable specific hook
-- `POST /admin/hooks/:name/disable`: Disable specific hook
-
-### 4. Settlement Integration (`src/chain/evm.rs`)
-
-Modified `validate_and_prepare_settlement()`:
-- Accepts `Option<&Arc<HookManager>>` parameter
-- Looks up hooks for destination address: `hook_manager.get_hooks_for_destination(to)`
-- Adds hooks to `ValidatedSettlement.hooks: Vec<HookCall>`
-
-Modified `settle_batch()`:
-- Builds Multicall3 with hooks included
-- For each settlement: 1 Call3 for transfer + N Call3s for hooks
-- Uses `allow_hook_failure` setting when hooks present
-
-### 5. Batch Processing (`src/batch_processor.rs`)
-
-Call3-aware batch sizing:
-```rust
-let calls_needed = 1 + settlement.hooks.len(); // 1 transfer + N hooks
-if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH {
-    // Flush current batch, start new one
-}
-```
-
-Splits validated settlements into sub-batches based on total Call3 count.
-
-### 6. Configuration (`src/config.rs`)
-
-Added `allow_hook_failure` field to `BatchSettlementConfig`:
-- Default: `false` (any hook failure reverts entire batch)
-- When `true`: hooks can fail without reverting transfers
-
-### 7. Main Integration (`src/main.rs`)
-
-- Initializes `HookManager` at startup
-- Registers admin hook routes
-- Adds `hook_manager` as `Extension` for handlers
-
-## Configuration Example
-
-### hooks.toml
+Hooks are configured in `hooks.toml`:
 
 ```toml
 [hooks]
-enabled = true
-allow_hook_failure = false
+enabled = true/false                    # Global enable/disable
+allow_hook_failure = true/false        # Allow individual hooks to fail
 
 [hooks.mappings]
-"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["notify_settlement"]
+"0xRecipientAddress" = ["hook_name"]   # Maps recipient → hooks
 
+[hooks.definitions.hook_name]
+enabled = true
+contract = "0xContractAddress"
+function_signature = "funcName(type1,type2,...)"
+gas_limit = 100000
+description = "What this hook does"
+
+[[hooks.definitions.hook_name.parameters]]
+type = "solidity_type"
+source = { source_type = "payment|runtime|config|static", field = "..." }
+```
+
+## Available Parameter Sources
+
+### Payment Fields (from EIP-3009 authorization)
+
+Extract data from the EIP-3009 `transferWithAuthorization` parameters:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from` | address | Payer address |
+| `to` | address | Recipient address |
+| `value` | uint256 | Transfer amount |
+| `validafter` | uint256 | Valid after timestamp |
+| `validbefore` | uint256 | Valid before timestamp |
+| `nonce` | bytes32 | Unique nonce |
+| `contractaddress` | address | Token contract address |
+| `signaturev` | uint8 | Signature v component |
+| `signaturer` | bytes32 | Signature r component |
+| `signatures` | bytes32 | Signature s component |
+
+**Example:**
+```toml
+[[hooks.definitions.my_hook.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+```
+
+### Runtime Fields (from settlement context)
+
+Access dynamic values available at settlement time:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | uint256 | Block timestamp (block.timestamp) |
+| `blocknumber` | uint256 | Block number (block.number) |
+| `sender` | address | Facilitator address (msg.sender) |
+| `batchindex` | uint256 | Position in current batch (0-indexed) |
+| `batchsize` | uint256 | Total settlements in batch |
+
+**Example:**
+```toml
+[[hooks.definitions.my_hook.parameters]]
+type = "uint256"
+source = { source_type = "runtime", field = "timestamp" }
+```
+
+### Config Values
+
+Use values from the hook's custom configuration:
+
+**Example:**
+```toml
+[hooks.definitions.my_hook.config_values]
+recipient = "0x1111111111111111111111111111111111111111"
+percentage = "250"
+
+[[hooks.definitions.my_hook.parameters]]
+type = "address"
+source = { source_type = "config", field = "recipient" }
+```
+
+### Static Values
+
+Use literal values directly in the configuration:
+
+**Example:**
+```toml
+[[hooks.definitions.my_hook.parameters]]
+type = "uint256"
+source = { source_type = "static", value = "100" }
+```
+
+## Example Implementations
+
+### Example 1: TokenMintWith3009 EIP-3009 Callback
+
+Calls `onPaymentReceived` on TokenMintWith3009 contract with full EIP-3009 parameters.
+
+**Solidity Interface:**
+```solidity
+interface ITokenMintWith3009 {
+    function onPaymentReceived(
+        address from,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external;
+}
+```
+
+**Configuration:**
+```toml
+[hooks.definitions.token_mint_callback]
+enabled = true
+description = "Calls onPaymentReceived with EIP-3009 authorization parameters"
+contract = "0xYourTokenMintContractAddress"
+function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
+gas_limit = 200000
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validafter" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validbefore" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "nonce" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint8"
+source = { source_type = "payment", field = "signaturev" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signaturer" }
+
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signatures" }
+```
+
+**Mapping:**
+```toml
+[hooks.mappings]
+"0xYourTokenMintContractAddress" = ["token_mint_callback"]
+```
+
+### Example 2: Simple Settlement Notification
+
+Notifies a contract when a settlement occurs with basic information.
+
+**Solidity Interface:**
+```solidity
+interface ISettlementNotifier {
+    function notifySettlement(
+        address from,
+        address to,
+        uint256 amount
+    ) external;
+}
+```
+
+**Configuration:**
+```toml
 [hooks.definitions.notify_settlement]
 enabled = true
-description = "Notify contract of settlement"
-contract = "0x1234567890abcdef1234567890abcdef12345678"
-calldata = "0x12345678..."  # Pre-encoded function call
+description = "Notifies contract of settlement with payer, recipient, and amount"
+contract = "0xNotifierContractAddress"
+function_signature = "notifySettlement(address,address,uint256)"
+gas_limit = 100000
+
+[[hooks.definitions.notify_settlement.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+[[hooks.definitions.notify_settlement.parameters]]
+type = "address"
+source = { source_type = "payment", field = "to" }
+
+[[hooks.definitions.notify_settlement.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+```
+
+### Example 3: Settlement with Runtime Context
+
+Includes block timestamp and facilitator address.
+
+**Solidity Interface:**
+```solidity
+interface ISettlementRecorder {
+    function recordSettlement(
+        address from,
+        address to,
+        uint256 amount,
+        uint256 timestamp,
+        address facilitator
+    ) external;
+}
+```
+
+**Configuration:**
+```toml
+[hooks.definitions.settlement_with_timestamp]
+enabled = true
+description = "Notifies contract with settlement details and block timestamp"
+contract = "0xRecorderContractAddress"
+function_signature = "recordSettlement(address,address,uint256,uint256,address)"
+gas_limit = 120000
+
+[[hooks.definitions.settlement_with_timestamp.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+[[hooks.definitions.settlement_with_timestamp.parameters]]
+type = "address"
+source = { source_type = "payment", field = "to" }
+
+[[hooks.definitions.settlement_with_timestamp.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+[[hooks.definitions.settlement_with_timestamp.parameters]]
+type = "uint256"
+source = { source_type = "runtime", field = "timestamp" }
+
+[[hooks.definitions.settlement_with_timestamp.parameters]]
+type = "address"
+source = { source_type = "runtime", field = "sender" }
+```
+
+### Example 4: Mixed Static and Dynamic Parameters
+
+Combines payment data with static configuration values for royalty distribution.
+
+**Solidity Interface:**
+```solidity
+interface IRoyaltyDistributor {
+    function distributeRoyalty(
+        address payer,
+        uint256 amount,
+        address royaltyRecipient,
+        uint256 royaltyPercentage
+    ) external;
+}
+```
+
+**Configuration:**
+```toml
+[hooks.definitions.royalty_distribution]
+enabled = true
+description = "Distributes royalties with configured percentages"
+contract = "0xRoyaltyContractAddress"
+function_signature = "distributeRoyalty(address,uint256,address,uint256)"
+gas_limit = 150000
+
+[hooks.definitions.royalty_distribution.config_values]
+royalty_recipient = "0x1111111111111111111111111111111111111111"
+royalty_percentage = "250"  # 2.5% in basis points
+
+[[hooks.definitions.royalty_distribution.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+[[hooks.definitions.royalty_distribution.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+[[hooks.definitions.royalty_distribution.parameters]]
+type = "address"
+source = { source_type = "config", field = "royalty_recipient" }
+
+[[hooks.definitions.royalty_distribution.parameters]]
+type = "uint256"
+source = { source_type = "config", field = "royalty_percentage" }
+```
+
+### Example 5: Batch Context Tracking
+
+Tracks settlement position within a batch for sequential processing.
+
+**Solidity Interface:**
+```solidity
+interface IBatchTracker {
+    function recordBatchSettlement(
+        address from,
+        uint256 amount,
+        uint256 batchIndex,
+        uint256 batchSize
+    ) external;
+}
+```
+
+**Configuration:**
+```toml
+[hooks.definitions.batch_tracker]
+enabled = true
+description = "Records settlement with batch context"
+contract = "0xBatchTrackerAddress"
+function_signature = "recordBatchSettlement(address,uint256,uint256,uint256)"
+gas_limit = 100000
+
+[[hooks.definitions.batch_tracker.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+[[hooks.definitions.batch_tracker.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+[[hooks.definitions.batch_tracker.parameters]]
+type = "uint256"
+source = { source_type = "runtime", field = "batchindex" }
+
+[[hooks.definitions.batch_tracker.parameters]]
+type = "uint256"
+source = { source_type = "runtime", field = "batchsize" }
+```
+
+### Example 6: Legacy Static Calldata Hook (Deprecated)
+
+Old-style hook with pre-encoded calldata. Use only for completely static calls.
+
+**Configuration:**
+```toml
+[hooks.definitions.legacy_example]
+enabled = false
+description = "Legacy hook with static calldata (deprecated)"
+contract = "0x0000000000000000000000000000000000000000"
+calldata = "0x12345678"  # Pre-encoded function selector + parameters
 gas_limit = 100000
 ```
 
-## Usage
+## Admin API
 
-### Adding a New Hook
+Manage hooks at runtime without restarting the server:
 
-1. **Deploy hook contract** with desired functionality
-2. **Create ABI**: Place contract ABI in `abi/hooks/YourHook.json`
-3. **Encode calldata**: Generate the calldata for your function call
-4. **Configure hook**: Add definition to `hooks.toml`:
-   ```toml
-   [hooks.definitions.your_hook]
-   enabled = true
-   description = "Your hook description"
-   contract = "0x..."
-   calldata = "0x..."
-   gas_limit = 100000
-   ```
-5. **Map destinations**: Add destination→hook mapping:
-   ```toml
-   [hooks.mappings]
-   "0xRecipientAddress" = ["your_hook"]
-   ```
-6. **Reload**: Call `POST /admin/hooks/reload` or restart server
-
-### Runtime Management
-
-Enable/disable hooks without restart:
+### List All Hooks
 ```bash
-# Enable hook
-curl -X POST http://localhost:8080/admin/hooks/my_hook/enable \
-  -H "X-Admin-Key: your-admin-key"
-
-# Disable hook
-curl -X POST http://localhost:8080/admin/hooks/my_hook/disable \
-  -H "X-Admin-Key: your-admin-key"
-
-# Reload configuration
-curl -X POST http://localhost:8080/admin/hooks/reload \
-  -H "X-Admin-Key: your-admin-key"
-
-# Check status
-curl http://localhost:8080/admin/hooks/status \
-  -H "X-Admin-Key: your-admin-key"
+curl -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks
 ```
 
-## Batch Sizing Example
+### List Hook Mappings
+```bash
+curl -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks/mappings
+```
 
-With `max_batch_size = 100` (Call3 count):
-- 30 settlements with 2 hooks each = 90 Call3s (30×3)
-- 10 settlements with 0 hooks = 10 Call3s (10×1)
-- **Total: 40 settlements = 100 Call3s** ✓
+### Reload Configuration
+```bash
+curl -X POST \
+  -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks/reload
+```
 
-The batch processor automatically splits based on Call3 count, not settlement count.
+### Enable/Disable Specific Hook
+```bash
+# Enable
+curl -X POST \
+  -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks/hook_name/enable
+
+# Disable
+curl -X POST \
+  -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks/hook_name/disable
+```
+
+### Check Hook Status
+```bash
+curl -H "X-Admin-Key: your_admin_key" \
+  http://localhost:8080/admin/hooks/status
+```
 
 ## Security Considerations
 
-1. **Whitelist-only**: All hooks must be manually added by admins
-2. **ABI Required**: Hook contracts must have ABIs in `abi/hooks/`
-3. **Facilitator permissions**: Hooks execute with facilitator's signing key
-4. **Atomicity control**: `allow_hook_failure` determines failure behavior
-5. **Hot-reload auth**: Configuration reloads require `X-Admin-Key`
+### Access Control
+- All hook definitions must be manually added by admins via `hooks.toml`
+- Only destination mappings can be modified via admin API (with authentication)
+- Hook contract addresses are immutable once defined
+- Admin API requires `X-Admin-Key` header authentication
 
-## Gas Considerations
+### Gas Limits
+- Set reasonable gas limits to prevent DoS attacks
+- Monitor hook execution costs in production
+- Consider batch size impact on total gas usage
+- Use `allow_hook_failure = false` by default for safety
 
-- Each hook adds gas cost to the batch transaction
-- Set appropriate `gas_limit` per hook to prevent DoS
-- Use `allow_hook_failure = true` carefully - may mask important errors
-- Monitor batch gas usage with hooks enabled
+### Contract Validation
+- Verify hook contract source code before deployment
+- Test hooks thoroughly on testnet
+- Ensure hook contracts handle failure gracefully
+- Use established audit patterns for hook contracts
 
-## Known Limitations / TODO
+### Permission Model
+- Hooks execute with facilitator's permissions
+- Hook contracts can perform any action the facilitator can perform
+- Treat hook contracts as highly privileged code
+- Implement proper access controls in hook contracts
 
-1. **Gas failure retry logic**: Not yet implemented (marked with TODO)
-2. **allow_hook_failure config**: Currently uses `allow_partial_failure` (TODO: wire up proper setting)
-3. **MAX_CALL3_PER_BATCH**: Hardcoded to 150 (TODO: make configurable)
-4. **reload_hooks workaround**: Uses inline closure due to trait bound issue with axum
+### Failure Handling
+- `allow_hook_failure = false` (default): Any hook failure reverts entire batch
+- `allow_hook_failure = true`: Individual hooks can fail without reverting transfers
+- Failed hooks indicate potential issues - investigate immediately
+- Monitor hook execution success rates
 
-## Testing
+## Testing Hooks
 
-The implementation compiles successfully with warnings only for unused code (expected when hooks.toml doesn't exist).
+### Local Testing
 
-To test:
-1. Create `hooks.toml` with test configuration
-2. Deploy a test hook contract
-3. Add hook ABI to `abi/hooks/`
-4. Configure mapping for test recipient
-5. Send settlement to mapped recipient
-6. Verify hook executes in same transaction via block explorer
+1. Deploy hook contract to testnet
+2. Add hook definition to `hooks.toml`
+3. Add recipient mapping
+4. Enable hooks globally: `enabled = true`
+5. Submit test payment to mapped recipient
+6. Verify hook execution in transaction logs
 
-## Files Modified
+### Unit Testing
 
-- `src/lib.rs`: Added `pub mod hooks;`
-- `src/main.rs`: Initialize HookManager, register admin routes, add Extension
-- `src/config.rs`: Added `allow_hook_failure` field
-- `src/chain/evm.rs`: Hook lookup in validation, Multicall3 building with hooks
-- `src/batch_processor.rs`: Call3-aware batch sizing and sub-batching
-- `src/hooks/` (new): config.rs, manager.rs, admin.rs, mod.rs
-- `hooks.toml` (new): Configuration file
-- `abi/hooks/ExampleHook.json` (new): Example ABI
+See `src/hooks/manager.rs` tests for examples of testing hook encoding and execution.
 
-## API Endpoints
+### Integration Testing
 
-All admin endpoints require `X-Admin-Key` header:
+1. Use testnet with test tokens
+2. Monitor Multicall3 transaction for hook execution
+3. Verify hook contract state changes
+4. Test both success and failure scenarios
+5. Validate batch behavior with multiple hooks
 
-- `GET /admin/hooks` - List hook definitions
-- `GET /admin/hooks/mappings` - List destination mappings  
-- `GET /admin/hooks/status` - System status
-- `POST /admin/hooks/reload` - Reload configuration
-- `POST /admin/hooks/:name/enable` - Enable hook
-- `POST /admin/hooks/:name/disable` - Disable hook
+## Troubleshooting
 
-## Implementation Notes
+### Hook Not Executing
 
-### reload_hooks Fix
+1. Check `hooks.enabled = true` in config
+2. Verify hook is `enabled = true`
+3. Confirm recipient address is in mappings
+4. Check admin logs for hook resolution
+5. Verify gas limit is sufficient
 
-The `reload_hooks` endpoint had a trait bound issue because `Box<dyn std::error::Error>` is not `Send`. Fixed by changing error type to `String`:
+### Hook Execution Failing
 
-```rust
-pub async fn reload(&self) -> Result<(), String> {
-    let config = HookConfig::from_file(&self.config_path)
-        .map_err(|e| e.to_string())?;
-    // ...
+1. Check transaction logs for revert reason
+2. Verify function signature matches contract ABI
+3. Ensure parameter types match Solidity types
+4. Test hook contract function directly
+5. Increase gas limit if out-of-gas
+
+### Parameter Encoding Issues
+
+1. Verify field names match available sources
+2. Check Solidity types are correct
+3. Ensure config values exist for `config` source
+4. Validate static values parse correctly
+5. Review logs for encoding errors
+
+## Best Practices
+
+1. **Start with testnet**: Always test hooks on testnet first
+2. **Use descriptive names**: Make hook names and descriptions clear
+3. **Document parameters**: Comment what each parameter represents
+4. **Monitor execution**: Watch hook execution in production
+5. **Keep gas low**: Minimize gas usage in hook contracts
+6. **Handle failures**: Implement proper error handling
+7. **Version control**: Track `hooks.toml` in git
+8. **Audit contracts**: Get hook contracts audited before mainnet
+9. **Test edge cases**: Try batch scenarios, failures, gas limits
+10. **Keep it simple**: Avoid complex logic in hooks when possible
+
+## Advanced Topics
+
+### Multiple Hooks per Recipient
+
+You can attach multiple hooks to a single recipient:
+
+```toml
+[hooks.mappings]
+"0xRecipient" = ["hook1", "hook2", "hook3"]
+```
+
+Hooks execute in array order. If `allow_hook_failure = false`, all hooks must succeed.
+
+### Conditional Hook Execution
+
+To conditionally execute hooks, implement the logic in the hook contract itself:
+
+```solidity
+function onPaymentReceived(...) external {
+    if (amount < MIN_AMOUNT) return;  // Skip small payments
+    // ... hook logic
 }
 ```
 
-And using inline closure in router to avoid handler trait issues:
-```rust
-.route("/admin/hooks/reload", post(|State(manager): State<Arc<HookManager>>| async move {
-    match manager.reload().await { /* ... */ }
-}))
+### Hook Composability
+
+Hooks can call other contracts, enabling complex workflows:
+
+```solidity
+function onPaymentReceived(...) external {
+    // Mint NFT
+    nftContract.mint(from, tokenId);
+
+    // Update registry
+    registry.recordMint(from, tokenId, amount);
+
+    // Emit event
+    emit PaymentProcessed(from, tokenId, amount);
+}
 ```
 
-### Call3 Counting Logic
+### Performance Optimization
 
-The batch processor counts Call3 structs correctly:
+- Use `batchindex` and `batchsize` to optimize batch processing
+- Minimize storage writes in hook contracts
+- Use events instead of storage when possible
+- Consider gas refunds for hook executions
+
+## Architecture
+
+### Components
+
+1. **Hook Configuration** (`src/hooks/config.rs`): TOML parsing and validation
+2. **Hook Manager** (`src/hooks/manager.rs`): Thread-safe hot-reloadable manager
+3. **Admin API** (`src/hooks/admin.rs`): REST endpoints for runtime management
+4. **Runtime Context** (`src/hooks/context.rs`): Dynamic parameter resolution
+5. **Settlement Integration** (`src/chain/evm.rs`): Hook lookup and execution
+
+### Call3-Aware Batching
+
+The batch processor counts total Multicall3 Call3 structs:
+
 ```rust
-for (settlement, channel) in validated_settlements {
-    let calls_needed = 1 + settlement.hooks.len();
+for settlement in validated_settlements {
+    let calls_needed = 1 + settlement.hooks.len();  // 1 transfer + N hooks
     if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH {
         // Start new sub-batch
     }
-    current_call3_count += calls_needed;
 }
 ```
 
-This ensures `max_batch_size` represents total Multicall3 Call3 structs, not just settlement count.
+With `max_batch_size = 100`:
+- 30 settlements × 3 calls each (1 transfer + 2 hooks) = 90 Call3s ✓
+- 100 settlements × 1 call each (transfer only) = 100 Call3s ✓
+
+## Reference Implementation
+
+See `abi/TokenMintWith3009.abi.json` for a complete reference implementation of an EIP-3009 aware hook contract.
+
+## Support
+
+For issues or questions:
+- Review this documentation
+- Check facilitator logs for errors
+- Test on testnet first
+- Review `docs/TESTING_HOOKS.md` for detailed testing guide
+- Open GitHub issue with details

@@ -8,12 +8,20 @@
 //! - `config`: Hook configuration structures (hooks.toml parsing)
 //! - `manager`: HookManager with hot-reload capability
 //! - `admin`: Admin API endpoints for managing hooks
+//! - `context`: Runtime context for dynamic parameter resolution
+//! - `errors`: Error types for hook operations
 //!
 //! ## Usage
 //!
-//! 1. Define hooks in `hooks.toml` with contract address and calldata
+//! ### Legacy Static Hooks
+//! 1. Define hooks in `hooks.toml` with contract address and static calldata
 //! 2. Map destination addresses to hooks
 //! 3. When settlement is sent to mapped destination, hooks execute atomically
+//!
+//! ### New Parameterized Hooks
+//! 1. Define hooks with `function_signature` and `parameters`
+//! 2. Parameters can extract values from EIP-3009 payment, runtime context, or static config
+//! 3. Calldata is dynamically encoded at settlement time
 //!
 //! ## Security
 //!
@@ -23,7 +31,10 @@
 
 pub mod admin;
 pub mod config;
+pub mod context;
+pub mod errors;
 pub mod manager;
 
-pub use config::{HookConfig, HookDefinition};
+// Public API exports
+pub use context::RuntimeContext;
 pub use manager::{HookCall, HookManager};

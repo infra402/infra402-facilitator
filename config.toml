@@ -140,6 +140,12 @@ block_time_seconds = 2
 receipt_timeout_blocks = 30  # 60 seconds total (30 blocks * 2s)
 rpc_request_timeout_seconds = 20
 
+# Base Sepolia Testnet - Chain ID 84532
+[transaction.chains.base-sepolia]
+block_time_seconds = 2
+receipt_timeout_blocks = 30  # 60 seconds total (30 blocks * 2s)
+rpc_request_timeout_seconds = 20
+
 # Ethereum Mainnet - Chain ID 1
 [transaction.chains.ethereum]
 block_time_seconds = 12

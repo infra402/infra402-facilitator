@@ -149,27 +149,9 @@ pub fn admin_hook_routes(manager: Arc<HookManager>, admin_auth: AdminAuth) -> Ro
         .route("/admin/hooks", get(list_hooks))
         .route("/admin/hooks/mappings", get(list_mappings))
         .route("/admin/hooks/status", get(hook_status))
-        .route("/admin/hooks/reload", post(|State(manager): State<Arc<HookManager>>| async move {
-            match manager.reload().await {
-                Ok(()) => {
-                    let hooks = manager.get_all_hooks().await;
-                    Json(SuccessResponse {
-                        success: true,
-                        message: Some(format!("Reloaded {} hook definitions", hooks.len())),
-                    })
-                    .into_response()
-                }
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: format!("Failed to reload hooks: {}", e),
-                    }),
-                )
-                    .into_response()
-            }
-        }))
-        .route("/admin/hooks/:name/enable", post(enable_hook))
-        .route("/admin/hooks/:name/disable", post(disable_hook))
+        .route("/admin/hooks/reload", post(reload_hooks))
+        .route("/admin/hooks/{name}/enable", post(enable_hook))
+        .route("/admin/hooks/{name}/disable", post(disable_hook))
         .with_state(manager)
         .layer(axum::middleware::from_fn(move |req, next| {
             let auth = Arc::clone(&admin_auth);
