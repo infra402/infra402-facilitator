@@ -27,12 +27,9 @@ Hooks are configured in `hooks.toml`:
 enabled = true/false                    # Global enable/disable
 allow_hook_failure = true/false        # Allow individual hooks to fail
 
-[hooks.mappings]
-"0xRecipientAddress" = ["hook_name"]   # Maps recipient → hooks
-
+# Hook definitions (shared across all networks)
 [hooks.definitions.hook_name]
 enabled = true
-contract = "0xContractAddress"
 function_signature = "funcName(type1,type2,...)"
 gas_limit = 100000
 description = "What this hook does"
@@ -40,6 +37,24 @@ description = "What this hook does"
 [[hooks.definitions.hook_name.parameters]]
 type = "solidity_type"
 source = { source_type = "payment|runtime|config|static", field = "..." }
+
+# Per-network configuration
+[hooks.networks.network-name]
+enabled = true
+
+# Recipient address → hook names mapping (supports env vars)
+[hooks.networks.network-name.mappings]
+"${RECIPIENT_ENV_VAR}" = ["hook_name"]
+
+# Hook name → contract address mapping (supports env vars)
+[hooks.networks.network-name.contracts]
+hook_name = "${CONTRACT_ENV_VAR}"
+```
+
+**Environment Variables (.env):**
+```bash
+RECIPIENT_ENV_VAR=0xRecipientAddress
+CONTRACT_ENV_VAR=0xContractAddress
 ```
 
 ## Available Parameter Sources
@@ -292,27 +307,31 @@ Add network-specific configuration for Base Sepolia (testnet):
 enabled = true
 
 # Recipient address → hook names mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
 [hooks.networks.base-sepolia.mappings]
-"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["token_mint_callback"]
+"${TOKEN_MINT_RECIPIENT_BASE_SEPOLIA}" = ["token_mint_callback"]
 
 # Hook name → contract address mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
 [hooks.networks.base-sepolia.contracts]
-# Option 1: Use environment variable (recommended for testing)
 token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT}"
-# Option 2: Hardcode address (for production)
-# token_mint_callback = "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
 ```
 
-**Important**: The recipient address in mappings should match where payments will be sent (often the token contract or a payment receiver).
+**Important**: Both recipient addresses in mappings and contract addresses support environment variable substitution using `"${ENV_VAR_NAME}"` syntax. This keeps hooks.toml git-committable without exposing deployment addresses.
 
-**3.3 Set Environment Variable (If Using Env Vars)**
+**3.3 Set Environment Variables**
 
 Add to your `.env` file (not committed to git):
 
 ```bash
-# Hook contract addresses for Base Sepolia
+# Recipient address that will receive payments and trigger the hook
+TOKEN_MINT_RECIPIENT_BASE_SEPOLIA=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
+
+# Hook contract address where the callback function is implemented
 HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT=0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb
 ```
+
+**Note**: In this example, the recipient and contract are the same address (the TokenMint contract receives the payment AND handles the callback). They can be different addresses depending on your use case.
 
 **3.4 Enable Hooks Globally**
 
@@ -326,7 +345,7 @@ allow_hook_failure = false  # Recommended: hooks must succeed
 
 **3.5 Production Configuration Example**
 
-For mainnet, you might hardcode addresses:
+For mainnet, use environment variables to keep hooks.toml git-committable:
 
 ```toml
 # Base mainnet configuration
@@ -334,10 +353,17 @@ For mainnet, you might hardcode addresses:
 enabled = true
 
 [hooks.networks.base.mappings]
-"0xProductionRecipientAddress" = ["token_mint_callback"]
+"${TOKEN_MINT_RECIPIENT_BASE}" = ["token_mint_callback"]
 
 [hooks.networks.base.contracts]
-token_mint_callback = "0xProductionContractAddress"  # Hardcoded for production
+token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_CONTRACT}"
+```
+
+Then set production addresses in `.env` (managed separately via CI/CD or secrets management):
+
+```bash
+TOKEN_MINT_RECIPIENT_BASE=0xYourProductionRecipientAddress
+HOOK_TOKEN_MINT_CALLBACK_BASE_CONTRACT=0xYourProductionContractAddress
 ```
 
 #### Step 4: Test the Hook
@@ -516,10 +542,10 @@ interface ISettlementNotifier {
 
 **Configuration:**
 ```toml
+# Hook definition (shared across networks)
 [hooks.definitions.notify_settlement]
 enabled = true
 description = "Notifies contract of settlement with payer, recipient, and amount"
-contract = "0xNotifierContractAddress"
 function_signature = "notifySettlement(address,address,uint256)"
 gas_limit = 100000
 
@@ -534,6 +560,22 @@ source = { source_type = "payment", field = "to" }
 [[hooks.definitions.notify_settlement.parameters]]
 type = "uint256"
 source = { source_type = "payment", field = "value" }
+
+# Per-network configuration (e.g., Base Sepolia)
+[hooks.networks.base-sepolia]
+enabled = true
+
+[hooks.networks.base-sepolia.mappings]
+"${NOTIFY_RECIPIENT_BASE_SEPOLIA}" = ["notify_settlement"]
+
+[hooks.networks.base-sepolia.contracts]
+notify_settlement = "${NOTIFY_CONTRACT_BASE_SEPOLIA}"
+```
+
+**Environment Variables (.env):**
+```bash
+NOTIFY_RECIPIENT_BASE_SEPOLIA=0xRecipientAddress
+NOTIFY_CONTRACT_BASE_SEPOLIA=0xNotifierContractAddress
 ```
 
 ### Example 3: Settlement with Runtime Context
@@ -555,10 +597,10 @@ interface ISettlementRecorder {
 
 **Configuration:**
 ```toml
+# Hook definition (shared across networks)
 [hooks.definitions.settlement_with_timestamp]
 enabled = true
 description = "Notifies contract with settlement details and block timestamp"
-contract = "0xRecorderContractAddress"
 function_signature = "recordSettlement(address,address,uint256,uint256,address)"
 gas_limit = 120000
 
@@ -581,6 +623,22 @@ source = { source_type = "runtime", field = "timestamp" }
 [[hooks.definitions.settlement_with_timestamp.parameters]]
 type = "address"
 source = { source_type = "runtime", field = "sender" }
+
+# Per-network configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+[hooks.networks.base-sepolia.mappings]
+"${RECORDER_RECIPIENT_BASE_SEPOLIA}" = ["settlement_with_timestamp"]
+
+[hooks.networks.base-sepolia.contracts]
+settlement_with_timestamp = "${RECORDER_CONTRACT_BASE_SEPOLIA}"
+```
+
+**Environment Variables (.env):**
+```bash
+RECORDER_RECIPIENT_BASE_SEPOLIA=0xRecipientAddress
+RECORDER_CONTRACT_BASE_SEPOLIA=0xRecorderContractAddress
 ```
 
 ### Example 4: Mixed Static and Dynamic Parameters
@@ -601,15 +659,15 @@ interface IRoyaltyDistributor {
 
 **Configuration:**
 ```toml
+# Hook definition (shared across networks)
 [hooks.definitions.royalty_distribution]
 enabled = true
 description = "Distributes royalties with configured percentages"
-contract = "0xRoyaltyContractAddress"
 function_signature = "distributeRoyalty(address,uint256,address,uint256)"
 gas_limit = 150000
 
 [hooks.definitions.royalty_distribution.config_values]
-royalty_recipient = "0x1111111111111111111111111111111111111111"
+royalty_recipient = "${ROYALTY_RECIPIENT_ADDRESS}"
 royalty_percentage = "250"  # 2.5% in basis points
 
 [[hooks.definitions.royalty_distribution.parameters]]
@@ -627,6 +685,23 @@ source = { source_type = "config", field = "royalty_recipient" }
 [[hooks.definitions.royalty_distribution.parameters]]
 type = "uint256"
 source = { source_type = "config", field = "royalty_percentage" }
+
+# Per-network configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+[hooks.networks.base-sepolia.mappings]
+"${ROYALTY_TRIGGER_RECIPIENT_BASE_SEPOLIA}" = ["royalty_distribution"]
+
+[hooks.networks.base-sepolia.contracts]
+royalty_distribution = "${ROYALTY_CONTRACT_BASE_SEPOLIA}"
+```
+
+**Environment Variables (.env):**
+```bash
+ROYALTY_TRIGGER_RECIPIENT_BASE_SEPOLIA=0xPaymentRecipientAddress
+ROYALTY_CONTRACT_BASE_SEPOLIA=0xRoyaltyContractAddress
+ROYALTY_RECIPIENT_ADDRESS=0x1111111111111111111111111111111111111111
 ```
 
 ### Example 5: Batch Context Tracking
@@ -647,10 +722,10 @@ interface IBatchTracker {
 
 **Configuration:**
 ```toml
+# Hook definition (shared across networks)
 [hooks.definitions.batch_tracker]
 enabled = true
 description = "Records settlement with batch context"
-contract = "0xBatchTrackerAddress"
 function_signature = "recordBatchSettlement(address,uint256,uint256,uint256)"
 gas_limit = 100000
 
@@ -669,21 +744,50 @@ source = { source_type = "runtime", field = "batchindex" }
 [[hooks.definitions.batch_tracker.parameters]]
 type = "uint256"
 source = { source_type = "runtime", field = "batchsize" }
+
+# Per-network configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+[hooks.networks.base-sepolia.mappings]
+"${BATCH_TRACKER_RECIPIENT_BASE_SEPOLIA}" = ["batch_tracker"]
+
+[hooks.networks.base-sepolia.contracts]
+batch_tracker = "${BATCH_TRACKER_CONTRACT_BASE_SEPOLIA}"
+```
+
+**Environment Variables (.env):**
+```bash
+BATCH_TRACKER_RECIPIENT_BASE_SEPOLIA=0xRecipientAddress
+BATCH_TRACKER_CONTRACT_BASE_SEPOLIA=0xBatchTrackerAddress
 ```
 
 ### Example 6: Legacy Static Calldata Hook (Deprecated)
 
-Old-style hook with pre-encoded calldata. Use only for completely static calls.
+**Note:** This example is deprecated. Use parameterized hooks (Examples 1-5) instead for better type safety and flexibility.
 
-**Configuration:**
+Old-style hook with pre-encoded calldata was used for completely static calls before parameterized hooks were available. This format is no longer recommended.
+
+**Legacy Configuration (deprecated):**
 ```toml
 [hooks.definitions.legacy_example]
 enabled = false
-description = "Legacy hook with static calldata (deprecated)"
-contract = "0x0000000000000000000000000000000000000000"
+description = "Legacy hook with static calldata (deprecated - use parameterized hooks instead)"
 calldata = "0x12345678"  # Pre-encoded function selector + parameters
 gas_limit = 100000
+
+# Even legacy hooks should use per-network configuration
+[hooks.networks.base-sepolia]
+enabled = false  # Keep disabled unless you need static calldata
+
+[hooks.networks.base-sepolia.mappings]
+"${LEGACY_RECIPIENT_BASE_SEPOLIA}" = ["legacy_example"]
+
+[hooks.networks.base-sepolia.contracts]
+legacy_example = "${LEGACY_CONTRACT_BASE_SEPOLIA}"
 ```
+
+**Recommendation:** Migrate to parameterized hooks for type safety and runtime flexibility.
 
 ## Admin API
 

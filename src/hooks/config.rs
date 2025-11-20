@@ -458,8 +458,9 @@ pub struct NetworkHookConfig {
     pub enabled: Option<bool>,
 
     /// Destination address → hook names mapping for this network
+    /// Supports environment variable substitution: "${ENV_VAR_NAME}"
     #[serde(default)]
-    pub mappings: HashMap<Address, Vec<String>>,
+    pub mappings: HashMap<String, Vec<String>>,
 
     /// Hook name → contract address mapping for this network
     /// Supports environment variable substitution: "${ENV_VAR_NAME}"
@@ -495,8 +496,9 @@ pub struct HookSettings {
     pub networks: HashMap<String, NetworkHookConfig>,
 
     /// DEPRECATED: Global mappings (use per-network mappings instead)
+    /// Supports environment variable substitution: "${ENV_VAR_NAME}"
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub mappings: HashMap<Address, Vec<String>>,
+    pub mappings: HashMap<String, Vec<String>>,
 }
 
 impl Default for HookSettings {
@@ -543,6 +545,18 @@ impl HookSettings {
         Address::from_str(&resolved).ok()
     }
 
+    /// Resolve a mapping address string to Address
+    ///
+    /// Supports environment variable substitution: "${ENV_VAR_NAME}"
+    /// Returns None if address string cannot be parsed.
+    pub fn resolve_mapping_address(address_str: &str) -> Option<Address> {
+        // Substitute environment variable if present
+        let resolved = Self::substitute_env_var(address_str);
+
+        // Parse address
+        Address::from_str(&resolved).ok()
+    }
+
     /// Substitute environment variable in string
     ///
     /// Format: "${ENV_VAR_NAME}" → value from std::env::var
@@ -564,7 +578,8 @@ impl HookSettings {
     /// Get destination mappings for a specific network
     ///
     /// Falls back to deprecated global mappings if network not configured.
-    pub fn get_network_mappings(&self, network_name: &str) -> &HashMap<Address, Vec<String>> {
+    /// Mapping keys support environment variable substitution: "${ENV_VAR_NAME}"
+    pub fn get_network_mappings(&self, network_name: &str) -> &HashMap<String, Vec<String>> {
         self.networks
             .get(network_name)
             .map(|n| &n.mappings)
@@ -607,7 +622,7 @@ mod tests {
 enabled = true
 
 [hooks.mappings]
-"0x5555555555555555555555555555555555555555" = ["notify_hook"]
+"${NOTIFY_RECIPIENT}" = ["notify_hook"]
 
 [hooks.definitions.notify_hook]
 enabled = true

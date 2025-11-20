@@ -7,7 +7,7 @@
 
 [hooks]
 # Global enable/disable flag for the hook system
-enabled = false
+enabled = true
 
 # Allow hook calls to fail without reverting the entire batch
 # When true: Individual hook calls can fail without reverting transfers
@@ -35,44 +35,62 @@ allow_hook_failure = false
 [hooks.definitions]
 # Add your hook definitions here
 
-# Example:
-# [hooks.definitions.token_mint]
-# enabled = true
-# description = "Mints tokens upon receiving payment"
-# function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
-# gas_limit = 200000
-# [[hooks.definitions.token_mint.parameters]]
-# type = "address"
-# source = { source_type = "payment", field = "from" }
-# # ... more parameters
+# Hook definitions are shared across all networks
+[hooks.definitions.token_mint_callback]
+enabled = true
+description = "EIP3009 token minting with callback"
+function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
 
-# ============================================================================
-# Per-Network Configuration
-# ============================================================================
-# Configure hooks differently for each network (base-sepolia, base, etc.)
-# Each network can have:
-#   - enabled: Enable/disable hooks for this network
-#   - mappings: Recipient address → hook names mapping
-#   - contracts: Hook name → contract address mapping
-#
-# Contract addresses support environment variable substitution:
-#   - "${ENV_VAR_NAME}" reads from environment variable
-#   - "0x1234..." uses literal address
-#
-# Environment variable naming convention:
-#   HOOK_{HOOK_NAME}_{NETWORK}_CONTRACT
-#   Example: HOOK_TOKEN_MINT_BASE_SEPOLIA_CONTRACT
+# Parameter 1: from (payer address)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
 
-# [hooks.networks.base-sepolia]
-# enabled = true
-# [hooks.networks.base-sepolia.mappings]
-# "0xRecipientAddress" = ["token_mint"]
-# [hooks.networks.base-sepolia.contracts]
-# token_mint = "${HOOK_TOKEN_MINT_BASE_SEPOLIA_CONTRACT}"
+# Parameter 2: value (transfer amount)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
 
-# [hooks.networks.base]
-# enabled = true
-# [hooks.networks.base.mappings]
-# "0xRecipientAddress" = ["token_mint"]
-# [hooks.networks.base.contracts]
-# token_mint = "0x1234567890123456789012345678901234567890"
+# Parameter 3: validAfter (EIP-3009 timestamp)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validafter" }
+
+# Parameter 4: validBefore (EIP-3009 timestamp)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validbefore" }
+
+# Parameter 5: nonce (EIP-3009 unique nonce)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "nonce" }
+
+# Parameter 6: v (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint8"
+source = { source_type = "payment", field = "signaturev" }
+
+# Parameter 7: r (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signaturer" }
+
+# Parameter 8: s (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signatures" }
+
+# Base Sepolia testnet configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+# Recipient address → hook names mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
+[hooks.networks.base-sepolia.mappings]
+"${TOKEN_MINT_RECIPIENT_BASE_SEPOLIA}" = ["token_mint_callback"]
+
+# Hook name → contract address mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
+[hooks.networks.base-sepolia.contracts]
+token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT}"

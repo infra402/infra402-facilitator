@@ -104,8 +104,25 @@ impl HookManager {
         // Get network-specific mappings
         let mappings = state.get_network_mappings(network);
 
-        // Look up hooks mapped to this destination
-        let hook_names = match mappings.get(&destination) {
+        // Resolve mapping addresses and find hooks for destination
+        // Mapping keys support env var substitution: "${ENV_VAR_NAME}"
+        let mut hook_names: Option<&Vec<String>> = None;
+        for (address_str, names) in mappings.iter() {
+            if let Some(resolved_addr) = super::config::HookSettings::resolve_mapping_address(address_str) {
+                if resolved_addr == destination {
+                    hook_names = Some(names);
+                    break;
+                }
+            } else {
+                tracing::warn!(
+                    address_str = address_str,
+                    network = network,
+                    "Failed to resolve mapping address (invalid or missing env var)"
+                );
+            }
+        }
+
+        let hook_names = match hook_names {
             Some(names) => names,
             None => return Ok(Vec::new()),
         };
@@ -221,7 +238,8 @@ impl HookManager {
     }
 
     /// Get all destination mappings (for admin API)
-    pub async fn get_all_mappings(&self) -> HashMap<Address, Vec<String>> {
+    /// Mapping keys support environment variable substitution: "${ENV_VAR_NAME}"
+    pub async fn get_all_mappings(&self) -> HashMap<String, Vec<String>> {
         let state = self.state.read().await;
         state.mappings.clone()
     }
@@ -333,7 +351,7 @@ mod tests {
         // Create network-specific configuration for base_sepolia
         let mut network_mappings = HashMap::new();
         network_mappings.insert(
-            address!("0x3333333333333333333333333333333333333333"),
+            "0x3333333333333333333333333333333333333333".to_string(),
             vec!["test_hook".to_string()],
         );
 

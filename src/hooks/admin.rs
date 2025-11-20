@@ -17,7 +17,6 @@ use std::sync::Arc;
 use super::config::HookDefinition;
 use super::manager::HookManager;
 use crate::security::admin_auth::AdminAuth;
-use alloy::primitives::Address;
 
 /// List all configured hooks (definitions)
 #[derive(Debug, Serialize)]
@@ -26,9 +25,10 @@ struct ListHooksResponse {
 }
 
 /// List all destination → hook mappings
+/// Mapping keys support environment variable substitution: "${ENV_VAR_NAME}"
 #[derive(Debug, Serialize)]
 struct ListMappingsResponse {
-    mappings: HashMap<Address, Vec<String>>,
+    mappings: HashMap<String, Vec<String>>,
 }
 
 /// Generic success response
