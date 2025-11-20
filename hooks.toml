@@ -14,33 +14,65 @@ enabled = false
 # When false: Any hook failure reverts the entire batch (safer default)
 allow_hook_failure = false
 
-# Destination address → hook mapping
-# Maps recipient addresses to hook names that should execute when they receive payments
-# Format: "0xRecipientAddress" = ["hook_name_1", "hook_name_2"]
-[hooks.mappings]
-# Example: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb" = ["notify_settlement"]
-
 # ============================================================================
-# Hook Definitions
+# Hook Definitions (shared across all networks)
 # ============================================================================
-# Define hooks here. Each hook specifies a contract to call and parameters to pass.
+# Define your hooks here with function signatures and parameters.
+# Contract addresses are specified per-network in [hooks.networks.xxx.contracts].
 #
 # Hook format:
-#   enabled = true/false
+#   [hooks.definitions.hook_name]
+#   enabled = true
 #   description = "What this hook does"
-#   contract = "0xContractAddress"
 #   function_signature = "functionName(type1,type2,...)"
 #   gas_limit = 100000
 #   [[hooks.definitions.hook_name.parameters]]
 #     type = "solidity_type"
 #     source = { source_type = "payment|runtime|config|static", field = "..." }
 #
-# See docs/HOOKS_IMPLEMENTATION.md for complete examples including:
-#   - TokenMintWith3009 EIP-3009 callback (complete step-by-step guide)
-#   - Simple settlement notifications
-#   - Runtime context usage
-#   - Config values and static parameters
-#   - Batch tracking
+# See docs/HOOKS_IMPLEMENTATION.md for complete examples.
 
 [hooks.definitions]
 # Add your hook definitions here
+
+# Example:
+# [hooks.definitions.token_mint]
+# enabled = true
+# description = "Mints tokens upon receiving payment"
+# function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
+# gas_limit = 200000
+# [[hooks.definitions.token_mint.parameters]]
+# type = "address"
+# source = { source_type = "payment", field = "from" }
+# # ... more parameters
+
+# ============================================================================
+# Per-Network Configuration
+# ============================================================================
+# Configure hooks differently for each network (base-sepolia, base, etc.)
+# Each network can have:
+#   - enabled: Enable/disable hooks for this network
+#   - mappings: Recipient address → hook names mapping
+#   - contracts: Hook name → contract address mapping
+#
+# Contract addresses support environment variable substitution:
+#   - "${ENV_VAR_NAME}" reads from environment variable
+#   - "0x1234..." uses literal address
+#
+# Environment variable naming convention:
+#   HOOK_{HOOK_NAME}_{NETWORK}_CONTRACT
+#   Example: HOOK_TOKEN_MINT_BASE_SEPOLIA_CONTRACT
+
+# [hooks.networks.base-sepolia]
+# enabled = true
+# [hooks.networks.base-sepolia.mappings]
+# "0xRecipientAddress" = ["token_mint"]
+# [hooks.networks.base-sepolia.contracts]
+# token_mint = "${HOOK_TOKEN_MINT_BASE_SEPOLIA_CONTRACT}"
+
+# [hooks.networks.base]
+# enabled = true
+# [hooks.networks.base.mappings]
+# "0xRecipientAddress" = ["token_mint"]
+# [hooks.networks.base.contracts]
+# token_mint = "0x1234567890123456789012345678901234567890"

@@ -81,13 +81,14 @@ pub struct ParameterDefinition {
     pub source: ParameterSource,
 }
 
-/// Hook definition with contract address, calldata, and gas limit
+/// Hook definition shared across networks
+///
+/// Defines the function signature, parameters, and execution settings.
+/// Contract addresses are specified per-network in NetworkHookConfig.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookDefinition {
-    /// Whether this hook is currently enabled
+    /// Whether this hook is currently enabled globally
     pub enabled: bool,
-    /// Target contract address for the hook call
-    pub contract: Address,
 
     /// Function signature for ABI encoding (e.g., "notifySettlement(address,address,uint256)")
     pub function_signature: String,
@@ -103,6 +104,7 @@ pub struct HookDefinition {
     /// Gas limit for this hook (0 = unlimited)
     #[serde(default)]
     pub gas_limit: u64,
+
     /// Human-readable description of what this hook does
     #[serde(default)]
     pub description: String,
@@ -443,6 +445,28 @@ impl HookDefinition {
     }
 }
 
+/// Per-network hook configuration
+///
+/// Specifies which hooks are active for a specific network,
+/// destination address mappings, and contract addresses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkHookConfig {
+    /// Override enabled for this network
+    /// - Some(true): Force hooks enabled for this network
+    /// - Some(false): Force hooks disabled for this network
+    /// - None: Use global enabled setting
+    pub enabled: Option<bool>,
+
+    /// Destination address → hook names mapping for this network
+    #[serde(default)]
+    pub mappings: HashMap<Address, Vec<String>>,
+
+    /// Hook name → contract address mapping for this network
+    /// Supports environment variable substitution: "${ENV_VAR_NAME}"
+    #[serde(default)]
+    pub contracts: HashMap<String, String>,
+}
+
 /// Complete hook configuration loaded from hooks.toml
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
@@ -457,15 +481,22 @@ pub struct HookSettings {
     /// Whether hooks are enabled globally
     #[serde(default = "default_true")]
     pub enabled: bool,
+
     /// Whether hook failures should be allowed (default: false = hooks must succeed)
     #[serde(default)]
     pub allow_hook_failure: bool,
-    /// Mapping of destination addresses to hook names
-    #[serde(default)]
-    pub mappings: HashMap<Address, Vec<String>>,
-    /// Hook definitions by name
+
+    /// Hook definitions shared across all networks
     #[serde(default)]
     pub definitions: HashMap<String, HookDefinition>,
+
+    /// Per-network configuration overrides
+    #[serde(default)]
+    pub networks: HashMap<String, NetworkHookConfig>,
+
+    /// DEPRECATED: Global mappings (use per-network mappings instead)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mappings: HashMap<Address, Vec<String>>,
 }
 
 impl Default for HookSettings {
@@ -473,8 +504,9 @@ impl Default for HookSettings {
         Self {
             enabled: true,
             allow_hook_failure: false,
-            mappings: HashMap::new(),
             definitions: HashMap::new(),
+            networks: HashMap::new(),
+            mappings: HashMap::new(),
         }
     }
 }
@@ -482,6 +514,65 @@ impl Default for HookSettings {
 fn default_true() -> bool {
     true
 }
+
+impl HookSettings {
+    /// Check if hooks are enabled for a specific network
+    ///
+    /// Resolution order:
+    /// 1. If network has explicit `enabled = true/false`, use that
+    /// 2. Otherwise, fall back to global `enabled` setting
+    pub fn is_enabled_for_network(&self, network_name: &str) -> bool {
+        self.networks
+            .get(network_name)
+            .and_then(|n| n.enabled)
+            .unwrap_or(self.enabled)
+    }
+
+    /// Resolve contract address for a hook on a specific network
+    ///
+    /// Supports environment variable substitution: "${ENV_VAR_NAME}"
+    /// Returns None if hook not configured for this network.
+    pub fn resolve_contract_address(&self, hook_name: &str, network_name: &str) -> Option<Address> {
+        let network_config = self.networks.get(network_name)?;
+        let address_str = network_config.contracts.get(hook_name)?;
+
+        // Substitute environment variable if present
+        let resolved = Self::substitute_env_var(address_str);
+
+        // Parse address
+        Address::from_str(&resolved).ok()
+    }
+
+    /// Substitute environment variable in string
+    ///
+    /// Format: "${ENV_VAR_NAME}" → value from std::env::var
+    fn substitute_env_var(s: &str) -> String {
+        if s.starts_with("${") && s.ends_with("}") {
+            let env_var_name = &s[2..s.len()-1];
+            std::env::var(env_var_name).unwrap_or_else(|_| {
+                tracing::warn!(
+                    env_var = env_var_name,
+                    "Environment variable not found, using empty address"
+                );
+                String::new()
+            })
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Get destination mappings for a specific network
+    ///
+    /// Falls back to deprecated global mappings if network not configured.
+    pub fn get_network_mappings(&self, network_name: &str) -> &HashMap<Address, Vec<String>> {
+        self.networks
+            .get(network_name)
+            .map(|n| &n.mappings)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(&self.mappings)
+    }
+}
+
 impl HookConfig {
     /// Load hook configuration from TOML file
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {

@@ -1229,14 +1229,16 @@ impl EvmProvider {
                     // Create runtime context for parameter resolution
                     // Use first signer address as placeholder (actual sender determined at settlement time)
                     let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+                    let network = &self.chain().network().to_string();
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, &metadata, &runtime).await {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, network, &metadata, &runtime).await {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
                                         error = %e,
+                                        network = network,
                                         destination = %to,
                                         "Hook parameter resolution failed, skipping hooks"
                                     );
@@ -1247,6 +1249,7 @@ impl EvmProvider {
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
+                                network = network,
                                 "Failed to fetch runtime context for hooks, skipping hooks"
                             );
                             Vec::new()
@@ -1304,14 +1307,16 @@ impl EvmProvider {
                     // Create runtime context for parameter resolution
                     // Use first signer address as placeholder (actual sender determined at settlement time)
                     let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+                    let network = &self.chain().network().to_string();
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, &metadata, &runtime).await {
+                            match hook_mgr.get_hooks_for_destination_with_context(to, network, &metadata, &runtime).await {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
                                         error = %e,
+                                        network = network,
                                         destination = %to,
                                         "Hook parameter resolution failed, skipping hooks"
                                     );
@@ -1322,6 +1327,7 @@ impl EvmProvider {
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
+                                network = network,
                                 "Failed to fetch runtime context for hooks, skipping hooks"
                             );
                             Vec::new()

@@ -27,17 +27,9 @@ pub struct HookCall {
 }
 
 /// Internal state for hot-reloadable hook management
-#[derive(Debug, Clone)]
-struct HookState {
-    /// Global enabled flag
-    enabled: bool,
-    /// Global allow_hook_failure setting
-    allow_hook_failure: bool,
-    /// Destination address → hook names mapping
-    mappings: HashMap<Address, Vec<String>>,
-    /// Hook name → definition mapping
-    definitions: HashMap<String, HookDefinition>,
-}
+///
+/// Wraps HookSettings for thread-safe hot-reload capability
+type HookState = super::config::HookSettings;
 
 /// Thread-safe hook manager with hot-reload capability
 #[derive(Debug, Clone)]
@@ -53,17 +45,12 @@ impl HookManager {
     pub fn new(config_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let config = HookConfig::from_file(config_path)?;
 
-        let state = HookState {
-            enabled: config.hooks.enabled,
-            allow_hook_failure: config.hooks.allow_hook_failure,
-            mappings: config.hooks.mappings,
-            definitions: config.hooks.definitions,
-        };
+        let state = config.hooks;
 
         tracing::info!(
             path = config_path,
             hooks_count = state.definitions.len(),
-            mappings_count = state.mappings.len(),
+            networks_count = state.networks.len(),
             "Initialized HookManager"
         );
 
@@ -77,19 +64,14 @@ impl HookManager {
     pub async fn reload(&self) -> Result<(), String> {
         let config = HookConfig::from_file(&self.config_path).map_err(|e| e.to_string())?;
 
-        let new_state = HookState {
-            enabled: config.hooks.enabled,
-            allow_hook_failure: config.hooks.allow_hook_failure,
-            mappings: config.hooks.mappings,
-            definitions: config.hooks.definitions,
-        };
+        let new_state = config.hooks;
 
         let mut state = self.state.write().await;
         *state = new_state.clone();
 
         tracing::info!(
             hooks_count = new_state.definitions.len(),
-            mappings_count = new_state.mappings.len(),
+            networks_count = new_state.networks.len(),
             "Reloaded HookManager configuration"
         );
 
@@ -99,21 +81,31 @@ impl HookManager {
     /// Get hooks for a specific destination with runtime parameter resolution
     ///
     /// Returns all enabled hooks mapped to this destination with dynamically encoded calldata.
+    ///
+    /// # Arguments
+    /// * `destination` - Recipient address to check for hooks
+    /// * `network` - Network name (e.g., "base_sepolia", "base")
+    /// * `metadata` - Settlement metadata for parameter resolution
+    /// * `runtime` - Runtime context for parameter resolution
     pub async fn get_hooks_for_destination_with_context(
         &self,
         destination: Address,
+        network: &str,
         metadata: &SettlementMetadata,
         runtime: &RuntimeContext,
     ) -> Result<Vec<HookCall>, HookError> {
         let state = self.state.read().await;
 
-        // If hooks disabled globally, return empty
-        if !state.enabled {
+        // Check if hooks are enabled for this network
+        if !state.is_enabled_for_network(network) {
             return Ok(Vec::new());
         }
 
+        // Get network-specific mappings
+        let mappings = state.get_network_mappings(network);
+
         // Look up hooks mapped to this destination
-        let hook_names = match state.mappings.get(&destination) {
+        let hook_names = match mappings.get(&destination) {
             Some(names) => names,
             None => return Ok(Vec::new()),
         };
@@ -123,9 +115,22 @@ impl HookManager {
         for name in hook_names {
             if let Some(def) = state.definitions.get(name) {
                 if !def.enabled {
-                    tracing::debug!(hook = name, "Skipping disabled hook");
+                    tracing::debug!(hook = name, network = network, "Skipping disabled hook");
                     continue;
                 }
+
+                // Resolve contract address for this network
+                let contract_address = match state.resolve_contract_address(name, network) {
+                    Some(addr) => addr,
+                    None => {
+                        tracing::warn!(
+                            hook = name,
+                            network = network,
+                            "Hook contract address not configured for network, skipping"
+                        );
+                        continue;
+                    }
+                };
 
                 // Encode calldata with parameter resolution
                 match def.encode_calldata(metadata, runtime) {
@@ -133,7 +138,7 @@ impl HookManager {
                         let calldata_len = calldata.len();
 
                         hooks.push(HookCall {
-                            target: def.contract,
+                            target: contract_address,
                             calldata,
                             gas_limit: def.gas_limit,
                             allow_failure: state.allow_hook_failure,
@@ -141,7 +146,9 @@ impl HookManager {
 
                         tracing::debug!(
                             hook = name,
+                            network = network,
                             destination = %destination,
+                            contract = %contract_address,
                             calldata_len,
                             "Encoded hook calldata"
                         );
@@ -149,6 +156,7 @@ impl HookManager {
                     Err(e) => {
                         tracing::error!(
                             hook = name,
+                            network = network,
                             destination = %destination,
                             error = %e,
                             "Failed to encode hook calldata"
@@ -159,6 +167,7 @@ impl HookManager {
             } else {
                 tracing::warn!(
                     hook = name,
+                    network = network,
                     destination = %destination,
                     "Hook referenced in mapping but not found in definitions"
                 );
@@ -168,6 +177,7 @@ impl HookManager {
         if !hooks.is_empty() {
             tracing::info!(
                 destination = %destination,
+                network = network,
                 hooks_count = hooks.len(),
                 "Retrieved hooks for destination with parameter resolution"
             );
@@ -244,8 +254,9 @@ mod tests {
             hooks: HookSettings {
                 enabled: true,
                 allow_hook_failure: false,
-                mappings: HashMap::new(),
                 definitions: HashMap::new(),
+                networks: HashMap::new(),
+                mappings: HashMap::new(),
             },
         };
 
@@ -276,6 +287,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x2222222222222222222222222222222222222222"),
+                "base_sepolia",
                 &metadata,
                 &runtime,
             )
@@ -310,7 +322,6 @@ mod tests {
             "test_hook".to_string(),
             HookDefinition {
                 enabled: true,
-                contract: address!("0x1234567890123456789012345678901234567890"),
                 function_signature: "notifySettlement(address,address,uint256)".to_string(),
                 parameters,
                 config_values: HashMap::new(),
@@ -319,18 +330,36 @@ mod tests {
             },
         );
 
-        let mut mappings = HashMap::new();
-        mappings.insert(
+        // Create network-specific configuration for base_sepolia
+        let mut network_mappings = HashMap::new();
+        network_mappings.insert(
             address!("0x3333333333333333333333333333333333333333"),
             vec!["test_hook".to_string()],
+        );
+
+        let mut network_contracts = HashMap::new();
+        network_contracts.insert(
+            "test_hook".to_string(),
+            "0x1234567890123456789012345678901234567890".to_string(),
+        );
+
+        let mut networks = HashMap::new();
+        networks.insert(
+            "base_sepolia".to_string(),
+            NetworkHookConfig {
+                enabled: Some(true),
+                mappings: network_mappings,
+                contracts: network_contracts,
+            },
         );
 
         let config = HookConfig {
             hooks: HookSettings {
                 enabled: true,
                 allow_hook_failure: false,
-                mappings,
                 definitions,
+                networks,
+                mappings: HashMap::new(),
             },
         };
 
@@ -361,6 +390,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x3333333333333333333333333333333333333333"),
+                "base_sepolia",
                 &metadata,
                 &runtime,
             )
