@@ -5,14 +5,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Contract type determines which ABI to use
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ContractType {
-    Usdc,  // Uses USDC ABI variant
-    Xbnb,  // Uses XBNB ABI variant
-}
-
 /// Token definition shared across networks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenDefinition {
@@ -31,8 +23,9 @@ pub struct TokenDefinition {
     /// EIP-712 domain version
     pub eip712_version: String,
 
-    /// Contract type determines which ABI variant to use
-    pub contract_type: ContractType,
+    /// Path to ABI file (e.g., "abi/USDC.json", "abi/ERC20TokenWith3009.json")
+    /// Determines which contract ABI variant to use for this token
+    pub abi_file: String,
 }
 
 /// Network-specific token deployments
@@ -247,7 +240,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.definitions.xbnb]
 symbol = "XBNB"
@@ -255,7 +248,7 @@ name = "x402 BNB"
 decimals = 18
 eip712_name = "x402 BNB"
 eip712_version = "1"
-contract_type = "xbnb"
+abi_file = "abi/ERC20TokenWith3009.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -269,12 +262,12 @@ usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
         let usdc = config.tokens.definitions.get("usdc").unwrap();
         assert_eq!(usdc.symbol, "USDC");
         assert_eq!(usdc.decimals, 6);
-        assert_eq!(usdc.contract_type, ContractType::Usdc);
+        assert_eq!(usdc.abi_file, "abi/USDC.json");
 
         let xbnb = config.tokens.definitions.get("xbnb").unwrap();
         assert_eq!(xbnb.symbol, "XBNB");
         assert_eq!(xbnb.decimals, 18);
-        assert_eq!(xbnb.contract_type, ContractType::Xbnb);
+        assert_eq!(xbnb.abi_file, "abi/ERC20TokenWith3009.json");
 
         // Check network deployments
         assert_eq!(config.tokens.networks.len(), 1);
@@ -298,7 +291,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -330,7 +323,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -359,7 +352,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -375,7 +368,7 @@ name = "Test USD Coin"
 decimals = 6
 eip712_name = "Test USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 test_usdc = "0x1111111111111111111111111111111111111111"
@@ -422,7 +415,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -438,7 +431,7 @@ name = "Test USD Coin"
 decimals = 6
 eip712_name = "Test USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 test_usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -475,7 +468,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 "#;
 
         let main_path = "/tmp/tokens_test_dir/tokens.toml";
@@ -491,7 +484,7 @@ name = "Test Token"
 decimals = 6
 eip712_name = "Test"
 eip712_version = "1"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 "#;
 
         std::fs::write("/tmp/tokens_test_dir/custom/tokens-custom.toml", custom_toml).unwrap();

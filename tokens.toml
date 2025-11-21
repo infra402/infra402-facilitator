@@ -23,7 +23,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"  # Uses USDC ABI variant
+abi_file = "abi/USDC.json"  # Path to ABI file
 
 # x402 BNB (XBNB) - Wrapped BNB for BSC networks
 [tokens.definitions.xbnb]
@@ -32,7 +32,7 @@ name = "x402 BNB"
 decimals = 18
 eip712_name = "x402 BNB"
 eip712_version = "1"
-contract_type = "xbnb"  # Uses XBNB ABI variant
+abi_file = "abi/XBNB.json"  # Path to ABI file
 
 # ============================================================================
 # Production Token Deployments (hardcoded addresses)

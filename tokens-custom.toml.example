@@ -27,7 +27,7 @@ name = "Test USD Coin"
 decimals = 6
 eip712_name = "Test USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.definitions.test_xbnb]
 symbol = "TestXBNB"
@@ -35,7 +35,7 @@ name = "Test x402 BNB"
 decimals = 18
 eip712_name = "Test x402 BNB"
 eip712_version = "1"
-contract_type = "xbnb"
+abi_file = "abi/XBNB.json"
 
 # ============================================================================
 # Custom Token Deployments (network-specific addresses)

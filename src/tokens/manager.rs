@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::config::{ContractType, TokenConfig, TokenDefinition, TokenSettings};
+use super::config::{TokenConfig, TokenDefinition, TokenSettings};
 
 /// Token manager for resolving token addresses and definitions
 #[derive(Debug, Clone)]
@@ -115,14 +115,14 @@ impl TokenManager {
         None
     }
 
-    /// Get contract type for a token
-    pub async fn get_contract_type(&self, token_name: &str) -> Option<ContractType> {
+    /// Get ABI file path for a token
+    pub async fn get_abi_file(&self, token_name: &str) -> Option<String> {
         let state = self.state.read().await;
         state
             .settings
             .definitions
             .get(token_name)
-            .map(|def| def.contract_type.clone())
+            .map(|def| def.abi_file.clone())
     }
 
     /// Reload configuration from disk
@@ -211,7 +211,7 @@ name = "USD Coin"
 decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
-contract_type = "usdc"
+abi_file = "abi/USDC.json"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
