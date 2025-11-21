@@ -97,7 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let axum_state = Arc::new(facilitator);
 
     // Initialize hook manager first (needed by batch queue manager)
-    let hook_manager = match crate::hooks::HookManager::new("hooks.toml") {
+    let hooks_path = std::env::var("HOOKS_FILE").unwrap_or_else(|_| "hooks.toml".to_string());
+    let hook_manager = match crate::hooks::HookManager::new(&hooks_path) {
         Ok(manager) => {
             tracing::info!("Hook manager initialized successfully");
             Some(Arc::new(manager))

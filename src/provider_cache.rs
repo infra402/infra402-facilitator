@@ -104,8 +104,9 @@ impl ProviderCache {
     /// Fails if required env vars are missing or if the provider cannot connect.
     pub async fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         // Create shared TokenManager once for all EVM providers
+        let tokens_path = std::env::var("TOKENS_FILE").unwrap_or_else(|_| "tokens.toml".to_string());
         let token_manager = Arc::new(
-            TokenManager::new("tokens.toml")
+            TokenManager::new(&tokens_path)
                 .map_err(|e| format!("Failed to load TokenManager: {}", e))?
         );
 

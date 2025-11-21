@@ -660,8 +660,9 @@ impl FromEnvByNetworkBuild for EvmProvider {
         let token_manager = if let Some(tm) = token_manager {
             Arc::clone(tm)
         } else {
+            let tokens_path = std::env::var("TOKENS_FILE").unwrap_or_else(|_| "tokens.toml".to_string());
             Arc::new(
-                TokenManager::new("tokens.toml")
+                TokenManager::new(&tokens_path)
                     .map_err(|e| format!("Failed to load TokenManager: {}", e))?
             )
         };

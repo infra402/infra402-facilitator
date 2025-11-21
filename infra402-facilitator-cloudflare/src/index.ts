@@ -47,6 +47,8 @@ function buildEnvVars(workerEnv: Env): Record<string, string> {
     API_KEYS: workerEnv.API_KEYS,
     ADMIN_API_KEY: workerEnv.ADMIN_API_KEY,
     CONFIG_FILE: workerEnv.CONFIG_FILE ?? "/app/config.toml",
+    TOKENS_FILE: workerEnv.TOKENS_FILE ?? "/app/tokens.toml",
+    HOOKS_FILE: workerEnv.HOOKS_FILE ?? "/app/hooks.toml",
     OTEL_EXPORTER_OTLP_ENDPOINT: workerEnv.OTEL_EXPORTER_OTLP_ENDPOINT,
     OTEL_EXPORTER_OTLP_HEADERS: workerEnv.OTEL_EXPORTER_OTLP_HEADERS,
     OTEL_EXPORTER_OTLP_PROTOCOL: workerEnv.OTEL_EXPORTER_OTLP_PROTOCOL,
