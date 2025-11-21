@@ -4,44 +4,23 @@
 
 A hardened [x402 protocol](https://x402.org) facilitator built on [x402-rs](https://github.com/x402-rs/x402-rs), featuring comprehensive security middleware, abuse detection, rate limiting, and Multicall3 batch settlement for production deployments.
 
-## Recent Updates
-
-### 🎉 Post-Settlement Hooks (v0.10.0)
-Execute custom contract calls atomically with settlement transfers via Multicall3. Supports hot-reload, per-destination mappings, and flexible failure handling. [→ Documentation](docs/HOOKS_IMPLEMENTATION.md)
-
-### ⚡ Performance Improvements
-- **RPC Optimization**: Batching and caching for 2-3x faster verification
-- **Connection Pool**: Configurable connection limits and idle timeouts
-- **Nonce Management**: Improved retry logic from x402-rs v0.9.2 integration
-
-### 🔧 Configuration Enhancements
-- **Rate Limit Whitelist**: Exempt trusted IPs from rate limiting
-- **Per-Network Batch Control**: Enable/disable batching per blockchain
-- **Global Batch Settlement**: Simplified enablement across all networks
-
-### 🧪 Developer Tools
-- **Stress Testing**: Standalone tool for load testing with BSC support
-- **Improved Logging**: Better visibility into batch processing and sub-batching
-
-### 📦 Dependencies
-- Upgraded to Alloy 1.1.0 for latest network features
-- Integrated x402-rs v0.9.2 with enhanced nonce management
-
 ## Features
 
 ### Core Protocol
 - ✅ **x402 Compliance**: Full protocol implementation with TypeScript/Go/Rust SDK compatibility
 - ✅ **Multi-Chain**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
-- ✅ **Payment Verification**: Cryptographic signature validation and balance checks
-- ✅ **Payment Settlement**: On-chain transaction submission and monitoring
-- ✨ **Post-Settlement Hooks**: Execute custom contract calls atomically with settlements
+- ✅ **Payment Verification**: Cryptographic signature validation and balance checks with RPC batching/caching (2-3x faster)
+- ✅ **Payment Settlement**: On-chain transaction submission and monitoring with improved nonce management
+- ✨ **Post-Settlement Hooks**: Execute custom contract calls atomically with settlements via Multicall3
+- 🪙 **Token Support**: ERC-20 with EIP-3009 signature-based transfers, configurable custom tokens via `tokens-custom.toml`
 
 ### Security & Operations
-- 🔒 **Enterprise Security**: Rate limiting, API keys, IP filtering, abuse detection
+- 🔒 **Enterprise Security**: Rate limiting with IP whitelist, API keys, IP filtering, abuse detection
 - 📊 **Observability**: OpenTelemetry tracing, structured logging, admin stats
-- ⚡ **High Performance**: Multi-wallet concurrency, Multicall3 batch settlement (100-150x throughput)
+- ⚡ **High Performance**: Multi-wallet concurrency, Multicall3 batch settlement (100-150x throughput), configurable connection pooling
 - 🐳 **Cloud Native**: Docker, Kubernetes, systemd deployment options
-- 🔄 **Hot Reload**: Runtime configuration updates without restart
+- 🔄 **Hot Reload**: Runtime configuration updates without restart (hooks, tokens, batch settings)
+- 🎛️ **Per-Network Control**: Enable/disable batching and customize settings per blockchain
 
 ## Quick Start
 
