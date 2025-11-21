@@ -12,7 +12,7 @@
 
 [tokens]
 # Optional: Path to custom tokens file (disabled by default)
-# custom_tokens_file = "tokens-custom.toml"
+custom_tokens_file = "tokens-custom.toml"
 
 # Global token definitions (shared across all networks)
 
@@ -24,6 +24,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"  # Path to ABI file
+signature_format = "packed_bytes"  # USDC uses packed 65-byte signature
 
 # x402 BNB (XBNB) - Wrapped BNB for BSC networks
 [tokens.definitions.xbnb]
@@ -32,7 +33,8 @@ name = "x402 BNB"
 decimals = 18
 eip712_name = "x402 BNB"
 eip712_version = "1"
-abi_file = "abi/XBNB.json"  # Path to ABI file
+abi_file = "abi/XBNB.json"  # Path to ABI file (must use XBNB-specific ABI)
+signature_format = "separate_vrs"  # XBNB uses separate v, r, s components
 
 # ============================================================================
 # Production Token Deployments (hardcoded addresses)

@@ -103,14 +103,31 @@ tokio::task_local! {
     pub static PRESELECTED_FACILITATOR: Address;
 }
 
-/// Unified enum for ERC-3009 compatible token contracts (USDC, XBNB, and ERC20TokenWith3009).
-///
-/// All variants implement the ERC-3009 `transferWithAuthorization` interface.
-/// This enum allows the code to work with any token type while maintaining type safety.
-pub enum Erc3009Contract<P> {
+/// ABI variants for tokens using packed bytes signature format
+pub enum PackedBytesAbi<P> {
+    /// USDC and USDC-compatible tokens
     Usdc(USDC::USDCInstance<P>),
+}
+
+/// ABI variants for tokens using separate v, r, s signature format
+/// Note: USDC only supports packed bytes signature format and is not included here
+pub enum SeparateVrsAbi<P> {
+    /// XBNB token with separate v,r,s signature
     Xbnb(XBNB::XBNBInstance<P>),
-    ERC20TokenWith3009(ERC20TokenWith3009::ERC20TokenWith3009Instance<P>),
+    /// Standard EIP-3009 tokens (ERC20TokenWith3009 and compatible tokens)
+    StandardEip3009(ERC20TokenWith3009::ERC20TokenWith3009Instance<P>),
+}
+
+/// Unified enum for ERC-3009 compatible token contracts.
+///
+/// Primary abstraction is signature format (how signatures are passed to transferWithAuthorization).
+/// Secondary level is ABI selection (which contract ABI to use, determined by abi_file in config).
+///
+/// - `PackedBytes`: For tokens using packed 65-byte signature format
+/// - `SeparateVrs`: For tokens using separate v, r, s components
+pub enum Erc3009Contract<P> {
+    PackedBytes(PackedBytesAbi<P>),
+    SeparateVrs(SeparateVrsAbi<P>),
 }
 
 /// Combined filler type for gas, blob gas, nonce, and chain ID.
@@ -700,9 +717,10 @@ where
                 // Prepare the call to simulate transfer the funds
                 let transfer_call = transferWithAuthorization_0(&contract, &payment, inner).await?;
                 // Execute ALL three calls in a single Multicall3 transaction: balance + signature + transfer
+                // Both PackedBytes and SeparateVrs contracts use the same balanceOf() interface
                 match (&contract, transfer_call.tx) {
-                    (Erc3009Contract::Usdc(usdc_contract), TransferWithAuthorizationCallBuilder::Usdc(tx)) => {
-                        let balance_call = usdc_contract.balanceOf(payment.from.0);
+                    (Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)), TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
@@ -711,7 +729,7 @@ where
                                 .add(is_valid_signature_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_usdc",
+                                .instrument(tracing::info_span!("batched_verify_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -726,11 +744,11 @@ where
                                 .inner()
                                 .multicall()
                                 .add(balance_call)
-                                .add(is_valid_signature_call)
+                                .add(is_valid_signature_call.clone())
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_usdc",
+                                .instrument(tracing::info_span!("batched_verify_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -744,6 +762,7 @@ where
                         )
                         .await
                         .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
                         // Check balance result
                         let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
@@ -761,8 +780,60 @@ where
                         // Check transfer simulation result
                         transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::Xbnb(xbnb_contract), TransferWithAuthorizationCallBuilder::Xbnb(tx)) => {
-                        let balance_call = xbnb_contract.balanceOf(payment.from.0);
+                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
+                        let (balance_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call.clone())
+                                
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call)
+                                
+                                .add(tx)
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check transfer simulation result
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                    }
+                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
@@ -771,7 +842,7 @@ where
                                 .add(is_valid_signature_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_xbnb",
+                                .instrument(tracing::info_span!("batched_verify_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -790,7 +861,7 @@ where
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_xbnb",
+                                .instrument(tracing::info_span!("batched_verify_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -804,6 +875,7 @@ where
                         )
                         .await
                         .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
                         // Check balance result
                         let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
@@ -835,9 +907,10 @@ where
                 let transfer_call =
                     transferWithAuthorization_0(&contract, &payment, signature).await?;
                 // Batch balance check + transfer simulation in a single Multicall3
+                // Both PackedBytes and SeparateVrs contracts use the same balanceOf() interface
                 match (&contract, transfer_call.tx) {
-                    (Erc3009Contract::Usdc(usdc_contract), TransferWithAuthorizationCallBuilder::Usdc(tx)) => {
-                        let balance_call = usdc_contract.balanceOf(payment.from.0);
+                    (Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)), TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
@@ -845,7 +918,7 @@ where
                                 .add(balance_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip1271_usdc",
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -863,7 +936,7 @@ where
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip1271_usdc",
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -877,6 +950,7 @@ where
                         )
                         .await
                         .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
                         // Check balance result
                         let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
@@ -885,8 +959,60 @@ where
                         // Check transfer simulation result
                         transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::Xbnb(xbnb_contract), TransferWithAuthorizationCallBuilder::Xbnb(tx)) => {
-                        let balance_call = xbnb_contract.balanceOf(payment.from.0);
+                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
+                        let (balance_result, transfer_result) = call_with_fallback(
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call.clone())
+                                
+                                .add(tx.clone())
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                            self
+                                .inner()
+                                .multicall()
+                                .add(balance_call)
+                                
+                                .add(tx)
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .aggregate3()
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
+                                        from = %transfer_call.from,
+                                        to = %transfer_call.to,
+                                        value = %transfer_call.value,
+                                        valid_after = %transfer_call.valid_after,
+                                        valid_before = %transfer_call.valid_before,
+                                        nonce = %transfer_call.nonce,
+                                        signature = %transfer_call.signature,
+                                        token_contract = %transfer_call.contract_address,
+                                        otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
+                        // Check balance result
+                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        if balance < max_amount_required {
+                            return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
+                        }
+                        // Check transfer simulation result
+                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                    }
+                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx))) => {
+                        let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
                             self
                                 .inner()
@@ -894,7 +1020,7 @@ where
                                 .add(balance_call.clone())
                                 .add(tx.clone())
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip1271_xbnb",
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -912,7 +1038,7 @@ where
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip1271_xbnb",
+                                .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
                                         from = %transfer_call.from,
                                         to = %transfer_call.to,
                                         value = %transfer_call.value,
@@ -926,6 +1052,7 @@ where
                         )
                         .await
                         .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+
                         // Check balance result
                         let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
@@ -1611,14 +1738,26 @@ struct Aggregate3Result {
     return_data: Bytes,
 }
 
+/// Nested enum for PackedBytes signature format call builders
+pub enum PackedBytesCallBuilder<P> {
+    Usdc(SolCallBuilder<P, USDC::transferWithAuthorization_0Call>),
+}
+
+/// Nested enum for SeparateVrs signature format call builders
+/// Note: USDC only supports packed bytes signature format and is not included here
+pub enum SeparateVrsCallBuilder<P> {
+    Xbnb(SolCallBuilder<P, XBNB::transferWithAuthorizationCall>),
+    StandardEip3009(SolCallBuilder<P, ERC20TokenWith3009::transferWithAuthorizationCall>),
+}
+
 /// Unified enum for ERC-3009 `transferWithAuthorization` call builders.
 ///
-/// Wraps either a USDC or XBNB call builder for the `transferWithAuthorization` function.
-/// Note: USDC has multiple overloads (_0), while XBNB and ERC20TokenWith3009 have only one (no suffix).
+/// Variants are based on signature format to support any EIP-3009 token:
+/// - `PackedBytes`: For tokens using packed 65-byte signature (e.g., USDC)
+/// - `SeparateVrs`: For tokens using separate v, r, s components (standard EIP-3009)
 pub enum TransferWithAuthorizationCallBuilder<P> {
-    Usdc(SolCallBuilder<P, USDC::transferWithAuthorization_0Call>),
-    Xbnb(SolCallBuilder<P, XBNB::transferWithAuthorizationCall>),
-    ERC20TokenWith3009(SolCallBuilder<P, ERC20TokenWith3009::transferWithAuthorizationCall>),
+    PackedBytes(PackedBytesCallBuilder<P>),
+    SeparateVrs(SeparateVrsCallBuilder<P>),
 }
 
 impl<P> TransferWithAuthorizationCallBuilder<P>
@@ -1628,18 +1767,26 @@ where
     /// Get the target address (contract address) of the call.
     pub fn target(&self) -> Address {
         match self {
-            TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.target(),
-            TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.target(),
-            TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx) => tx.target(),
+            TransferWithAuthorizationCallBuilder::PackedBytes(inner) => match inner {
+                PackedBytesCallBuilder::Usdc(tx) => tx.target(),
+            },
+            TransferWithAuthorizationCallBuilder::SeparateVrs(inner) => match inner {
+                SeparateVrsCallBuilder::Xbnb(tx) => tx.target(),
+                SeparateVrsCallBuilder::StandardEip3009(tx) => tx.target(),
+            },
         }
     }
 
     /// Get the calldata for this transaction.
     pub fn calldata(&self) -> Bytes {
         match self {
-            TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.calldata().clone(),
-            TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.calldata().clone(),
-            TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx) => tx.calldata().clone(),
+            TransferWithAuthorizationCallBuilder::PackedBytes(inner) => match inner {
+                PackedBytesCallBuilder::Usdc(tx) => tx.calldata().clone(),
+            },
+            TransferWithAuthorizationCallBuilder::SeparateVrs(inner) => match inner {
+                SeparateVrsCallBuilder::Xbnb(tx) => tx.calldata().clone(),
+                SeparateVrsCallBuilder::StandardEip3009(tx) => tx.calldata().clone(),
+            },
         }
     }
 }
@@ -1766,87 +1913,91 @@ async fn assert_enough_balance<P: Provider>(
     max_amount_required: U256,
 ) -> Result<(), FacilitatorLocalError> {
     let balance = match token_contract {
-        Erc3009Contract::Usdc(usdc_contract) => {
-            call_with_fallback(
-                usdc_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %usdc_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-                usdc_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .block(BlockId::Number(BlockNumberOrTag::Latest))
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %usdc_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-            )
-            .await
-            .map_err(|e| categorize_transport_error(e, "balance query"))?
-        }
-        Erc3009Contract::Xbnb(xbnb_contract) => {
-            call_with_fallback(
-                xbnb_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %xbnb_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-                xbnb_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .block(BlockId::Number(BlockNumberOrTag::Latest))
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %xbnb_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-            )
-            .await
-            .map_err(|e| categorize_transport_error(e, "balance query"))?
-        }
-        Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
-            call_with_fallback(
-                erc20_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %erc20_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-                erc20_contract
-                    .balanceOf(sender.0)
-                    .call()
-                    .block(BlockId::Number(BlockNumberOrTag::Latest))
-                    .into_future()
-                    .instrument(tracing::info_span!(
-                        "fetch_token_balance",
-                        token_contract = %erc20_contract.address(),
-                        sender = %sender,
-                        otel.kind = "client"
-                    )),
-            )
-            .await
-            .map_err(|e| categorize_transport_error(e, "balance query"))?
-        }
+        Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
+            PackedBytesAbi::Usdc(contract_inst) => {
+                call_with_fallback(
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .block(BlockId::Number(BlockNumberOrTag::Latest))
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                )
+                .await
+                .map_err(|e| categorize_transport_error(e, "balance query"))?
+            }
+        },
+        Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
+            SeparateVrsAbi::Xbnb(contract_inst) => {
+                call_with_fallback(
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .block(BlockId::Number(BlockNumberOrTag::Latest))
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                )
+                .await
+                .map_err(|e| categorize_transport_error(e, "balance query"))?
+            }
+            SeparateVrsAbi::StandardEip3009(contract_inst) => {
+                call_with_fallback(
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                    contract_inst
+                        .balanceOf(sender.0)
+                        .call()
+                        .block(BlockId::Number(BlockNumberOrTag::Latest))
+                        .into_future()
+                        .instrument(tracing::info_span!(
+                            "fetch_token_balance",
+                            token_contract = %contract_inst.address(),
+                            sender = %sender,
+                            otel.kind = "client"
+                        )),
+                )
+                .await
+                .map_err(|e| categorize_transport_error(e, "balance query"))?
+            }
+        },
     };
 
     if balance < max_amount_required {
@@ -1973,7 +2124,92 @@ async fn assert_domain<P: Provider>(
             } else {
                 // Cache miss or expired - fetch from RPC
                 let fetched_version = match token_contract {
-                    Erc3009Contract::Usdc(usdc_contract) => {
+                    Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
+                        PackedBytesAbi::Usdc(usdc_contract) => {
+                            call_with_fallback(
+                                usdc_contract
+                                    .version()
+                                    .call()
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_version",
+                                        otel.kind = "client",
+                                    )),
+                                usdc_contract
+                                    .version()
+                                    .call()
+                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_version",
+                                        otel.kind = "client",
+                                    )),
+                            )
+                            .await
+                            .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
+                        }
+                    },
+                    Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
+                        SeparateVrsAbi::Xbnb(erc20_contract) => {
+                            let domain = call_with_fallback(
+                                erc20_contract
+                                    .eip712Domain()
+                                    .call()
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_domain",
+                                        otel.kind = "client",
+                                    )),
+                                erc20_contract
+                                    .eip712Domain()
+                                    .call()
+                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_domain",
+                                        otel.kind = "client",
+                                    )),
+                            )
+                            .await
+                            .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                            domain.version // version field from the eip712Domain response
+                        }
+                        SeparateVrsAbi::StandardEip3009(erc20_contract) => {
+                            let domain = call_with_fallback(
+                                erc20_contract
+                                    .eip712Domain()
+                                    .call()
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_domain",
+                                        otel.kind = "client",
+                                    )),
+                                erc20_contract
+                                    .eip712Domain()
+                                    .call()
+                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                    .into_future()
+                                    .instrument(tracing::info_span!(
+                                        "fetch_eip712_domain",
+                                        otel.kind = "client",
+                                    )),
+                            )
+                            .await
+                            .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                            domain.version // version field from the eip712Domain response
+                        }
+                    },
+                };
+                // Store in cache for future requests
+                cache.write().await.insert(*asset_address, (fetched_version.clone(), std::time::Instant::now()));
+                tracing::debug!(token = %asset_address, version = %fetched_version, "cached EIP-712 version");
+                fetched_version
+            }
+        } else {
+            // No cache provided - fetch directly (legacy behavior)
+            match token_contract {
+                Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
+                    PackedBytesAbi::Usdc(usdc_contract) => {
                         call_with_fallback(
                             usdc_contract
                                 .version()
@@ -1996,31 +2232,9 @@ async fn assert_domain<P: Provider>(
                         .await
                         .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
                     }
-                    Erc3009Contract::Xbnb(xbnb_contract) => {
-                        let domain = call_with_fallback(
-                            xbnb_contract
-                                .eip712Domain()
-                                .call()
-                                .into_future()
-                                .instrument(tracing::info_span!(
-                                    "fetch_eip712_domain",
-                                    otel.kind = "client",
-                                )),
-                            xbnb_contract
-                                .eip712Domain()
-                                .call()
-                                .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .into_future()
-                                .instrument(tracing::info_span!(
-                                    "fetch_eip712_domain",
-                                    otel.kind = "client",
-                                )),
-                        )
-                        .await
-                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
-                        domain.version // version field from the eip712Domain response
-                    }
-                    Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
+                },
+                Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
+                    SeparateVrsAbi::Xbnb(erc20_contract) => {
                         let domain = call_with_fallback(
                             erc20_contract
                                 .eip712Domain()
@@ -2044,86 +2258,31 @@ async fn assert_domain<P: Provider>(
                         .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
                         domain.version // version field from the eip712Domain response
                     }
-                };
-                // Store in cache for future requests
-                cache.write().await.insert(*asset_address, (fetched_version.clone(), std::time::Instant::now()));
-                tracing::debug!(token = %asset_address, version = %fetched_version, "cached EIP-712 version");
-                fetched_version
-            }
-        } else {
-            // No cache provided - fetch directly (legacy behavior)
-            match token_contract {
-                Erc3009Contract::Usdc(usdc_contract) => {
-                    call_with_fallback(
-                        usdc_contract
-                            .version()
-                            .call()
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_version",
-                                otel.kind = "client",
-                            )),
-                        usdc_contract
-                            .version()
-                            .call()
-                            .block(BlockId::Number(BlockNumberOrTag::Latest))
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_version",
-                                otel.kind = "client",
-                            )),
-                    )
-                    .await
-                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
-                }
-                Erc3009Contract::Xbnb(xbnb_contract) => {
-                    let domain = call_with_fallback(
-                        xbnb_contract
-                            .eip712Domain()
-                            .call()
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_domain",
-                                otel.kind = "client",
-                            )),
-                        xbnb_contract
-                            .eip712Domain()
-                            .call()
-                            .block(BlockId::Number(BlockNumberOrTag::Latest))
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_domain",
-                                otel.kind = "client",
-                            )),
-                    )
-                    .await
-                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
-                    domain.version // version field from the eip712Domain response
-                }
-                Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
-                    let domain = call_with_fallback(
-                        erc20_contract
-                            .eip712Domain()
-                            .call()
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_domain",
-                                otel.kind = "client",
-                            )),
-                        erc20_contract
-                            .eip712Domain()
-                            .call()
-                            .block(BlockId::Number(BlockNumberOrTag::Latest))
-                            .into_future()
-                            .instrument(tracing::info_span!(
-                                "fetch_eip712_domain",
-                                otel.kind = "client",
-                            )),
-                    )
-                    .await
-                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
-                    domain.version // version field from the eip712Domain response
-                }
+                    SeparateVrsAbi::StandardEip3009(erc20_contract) => {
+                        let domain = call_with_fallback(
+                            erc20_contract
+                                .eip712Domain()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                            erc20_contract
+                                .eip712Domain()
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                        domain.version // version field from the eip712Domain response
+                    }
+                },
             }
         }
     };
@@ -2146,26 +2305,47 @@ async fn assert_domain<P: Provider>(
 /// * `asset_address` - The token contract address
 /// * `provider` - The Ethereum provider
 ///
+/// Create the appropriate ERC-3009 contract instance based on signature format and ABI file.
+///
+/// # Parameters
+/// - `signature_format`: How the signature is passed (PackedBytes or SeparateVrs)
+/// - `abi_file`: Path to the ABI file (e.g., "abi/USDC.json", "abi/XBNB.json")
+/// - `asset_address`: The token contract address
+/// - `provider`: The Alloy provider instance
+///
 /// # Returns
-/// The appropriate `Erc3009Contract` variant for the given ABI file
-fn determine_contract_from_abi_file<P: Provider + Clone>(
+/// The appropriate `Erc3009Contract` variant with the correct nested ABI enum
+fn create_erc3009_contract<P: Provider + Clone>(
+    signature_format: crate::tokens::SignatureFormat,
     abi_file: &str,
     asset_address: Address,
     provider: P,
-) -> Result<Erc3009Contract<P>, FacilitatorLocalError> {
-    match abi_file {
-        "abi/USDC.json" | "abi/usdc.json" => {
-            Ok(Erc3009Contract::Usdc(USDC::new(asset_address, provider)))
+) -> Erc3009Contract<P> {
+    match (signature_format, abi_file) {
+        // PackedBytes signature format with USDC ABI
+        (crate::tokens::SignatureFormat::PackedBytes, "abi/USDC.json") => {
+            Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(USDC::new(asset_address, provider)))
         }
-        "abi/XBNB.json" | "abi/xbnb.json" => {
-            Ok(Erc3009Contract::Xbnb(XBNB::new(asset_address, provider)))
+
+        // SeparateVrs signature format with XBNB ABI
+        (crate::tokens::SignatureFormat::SeparateVrs, "abi/XBNB.json") => {
+            Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(XBNB::new(asset_address, provider)))
         }
-        "abi/ERC20TokenWith3009.json" | "abi/erc20tokenwith3009.json" => {
-            Ok(Erc3009Contract::ERC20TokenWith3009(ERC20TokenWith3009::new(asset_address, provider)))
+
+        // SeparateVrs signature format with standard ERC20TokenWith3009 ABI (default for new tokens)
+        (crate::tokens::SignatureFormat::SeparateVrs, "abi/ERC20TokenWith3009.json") => {
+            Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(ERC20TokenWith3009::new(asset_address, provider)))
         }
-        _ => Err(FacilitatorLocalError::ContractCall(
-            format!("Unknown ABI file: {}. Supported ABIs: abi/USDC.json, abi/XBNB.json, abi/ERC20TokenWith3009.json", abi_file)
-        )),
+
+        // Fallback for unknown combinations
+        (format, abi) => {
+            tracing::warn!(
+                signature_format = ?format,
+                abi_file = abi,
+                "Unknown signature format + ABI combination, falling back to USDC with PackedBytes"
+            );
+            Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(USDC::new(asset_address, provider)))
+        }
     }
 }
 
@@ -2240,38 +2420,36 @@ async fn assert_valid_payment<P: Provider + Clone>(
         ))?;
 
     // Determine contract type based on token configuration via TokenManager
-    // Flow: asset_address → get_token_name() → get_abi_file() → determine_contract_from_abi_file()
+    // Flow: asset_address → get_token_name() → get_signature_format() + get_abi_file() → create_erc3009_contract()
     let network_str = chain.network.to_string();
     let contract = if let Some(token_name) = token_manager.get_token_name(asset_address, &network_str).await {
-        if let Some(abi_file) = token_manager.get_abi_file(&token_name).await {
-            match determine_contract_from_abi_file(&abi_file, asset_address, provider.clone()) {
-                Ok(contract) => contract,
-                Err(e) => {
-                    tracing::warn!(
-                        token = token_name,
-                        abi_file = abi_file,
-                        asset_address = %asset_address,
-                        error = %e,
-                        "Failed to determine contract from ABI file, falling back to USDC"
-                    );
-                    Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
-                }
-            }
+        if let (Some(signature_format), Some(abi_file)) = (
+            token_manager.get_signature_format(&token_name).await,
+            token_manager.get_abi_file(&token_name).await,
+        ) {
+            tracing::debug!(
+                token = token_name,
+                signature_format = ?signature_format,
+                abi_file = %abi_file,
+                asset_address = %asset_address,
+                "Creating ERC-3009 contract with signature format and ABI from configuration"
+            );
+            create_erc3009_contract(signature_format, &abi_file, asset_address, provider.clone())
         } else {
             tracing::warn!(
                 token = token_name,
                 asset_address = %asset_address,
-                "Token found but no abi_file configured, falling back to USDC"
+                "Token found but no signature_format or abi_file configured, falling back to packed_bytes (USDC-style)"
             );
-            Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
+            create_erc3009_contract(crate::tokens::SignatureFormat::PackedBytes, "abi/USDC.json", asset_address, provider.clone())
         }
     } else {
         tracing::warn!(
             asset_address = %asset_address,
             network = network_str,
-            "Token not recognized in configuration, falling back to USDC"
+            "Token not recognized in configuration, falling back to packed_bytes (USDC-style)"
         );
-        Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
+        create_erc3009_contract(crate::tokens::SignatureFormat::PackedBytes, "abi/USDC.json", asset_address, provider.clone())
     };
 
     let domain = assert_domain(chain, &contract, payload, &asset_address, requirements, version_cache).await?;
@@ -2322,23 +2500,28 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
     let valid_before: U256 = payment.valid_before.into();
     let nonce = FixedBytes(payment.nonce.0);
 
-    // Call transferWithAuthorization on the appropriate contract type
-    // Note: USDC has overloads (_0 suffix), XBNB has only one (no suffix)
+    // Call transferWithAuthorization based on signature format and ABI
     let (tx, contract_address) = match contract {
-        Erc3009Contract::Usdc(usdc_contract) => {
-            let tx = usdc_contract.transferWithAuthorization_0(
-                from,
-                to,
-                value,
-                valid_after,
-                valid_before,
-                nonce,
-                signature.clone(),
-            );
-            (TransferWithAuthorizationCallBuilder::Usdc(tx), *usdc_contract.address())
-        }
-        Erc3009Contract::Xbnb(xbnb_contract) => {
-            // XBNB uses separate v, r, s parameters instead of a single Bytes signature
+        Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
+            PackedBytesAbi::Usdc(usdc_contract) => {
+                // Packed bytes signature (USDC-style) - passes signature as-is
+                let tx = usdc_contract.transferWithAuthorization_0(
+                    from,
+                    to,
+                    value,
+                    valid_after,
+                    valid_before,
+                    nonce,
+                    signature.clone(),
+                );
+                (
+                    TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx)),
+                    *usdc_contract.address(),
+                )
+            }
+        },
+        Erc3009Contract::SeparateVrs(separate_abi) => {
+            // Separate v, r, s parameters (standard EIP-3009)
             // Signature format: 65 bytes (r: 32 bytes, s: 32 bytes, v: 1 byte)
             if signature.len() != 65 {
                 return Err(FacilitatorLocalError::InvalidSignature(
@@ -2350,44 +2533,42 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
             let r = FixedBytes::<32>::from_slice(&signature[0..32]);
             let s = FixedBytes::<32>::from_slice(&signature[32..64]);
 
-            let tx = xbnb_contract.transferWithAuthorization(
-                from,
-                to,
-                value,
-                valid_after,
-                valid_before,
-                nonce,
-                v,
-                r,
-                s,
-            );
-            (TransferWithAuthorizationCallBuilder::Xbnb(tx), *xbnb_contract.address())
-        }
-        Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
-            // ERC20TokenWith3009 uses separate v, r, s parameters like XBNB
-            // Signature format: 65 bytes (r: 32 bytes, s: 32 bytes, v: 1 byte)
-            if signature.len() != 65 {
-                return Err(FacilitatorLocalError::InvalidSignature(
-                    payment.from.into(),
-                    format!("Invalid signature length: expected 65, got {}", signature.len()),
-                ));
+            match separate_abi {
+                SeparateVrsAbi::Xbnb(xbnb_contract) => {
+                    let tx = xbnb_contract.transferWithAuthorization(
+                        from,
+                        to,
+                        value,
+                        valid_after,
+                        valid_before,
+                        nonce,
+                        v,
+                        r,
+                        s,
+                    );
+                    (
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx)),
+                        *xbnb_contract.address(),
+                    )
+                }
+                SeparateVrsAbi::StandardEip3009(erc20_contract) => {
+                    let tx = erc20_contract.transferWithAuthorization(
+                        from,
+                        to,
+                        value,
+                        valid_after,
+                        valid_before,
+                        nonce,
+                        v,
+                        r,
+                        s,
+                    );
+                    (
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx)),
+                        *erc20_contract.address(),
+                    )
+                }
             }
-            let v = signature[64];
-            let r = FixedBytes::<32>::from_slice(&signature[0..32]);
-            let s = FixedBytes::<32>::from_slice(&signature[32..64]);
-
-            let tx = erc20_contract.transferWithAuthorization(
-                from,
-                to,
-                value,
-                valid_after,
-                valid_before,
-                nonce,
-                v,
-                r,
-                s,
-            );
-            (TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx), *erc20_contract.address())
         }
     };
 

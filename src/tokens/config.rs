@@ -5,6 +5,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// EIP-3009 signature format
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignatureFormat {
+    /// Packed 65-byte signature (USDC-style)
+    PackedBytes,
+    /// Separate v, r, s components (standard EIP-3009)
+    SeparateVrs,
+}
+
 /// Token definition shared across networks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenDefinition {
@@ -26,6 +36,9 @@ pub struct TokenDefinition {
     /// Path to ABI file (e.g., "abi/USDC.json", "abi/ERC20TokenWith3009.json")
     /// Determines which contract ABI variant to use for this token
     pub abi_file: String,
+
+    /// EIP-3009 signature format for transferWithAuthorization
+    pub signature_format: SignatureFormat,
 }
 
 /// Network-specific token deployments
@@ -241,6 +254,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.definitions.xbnb]
 symbol = "XBNB"
@@ -249,6 +263,7 @@ decimals = 18
 eip712_name = "x402 BNB"
 eip712_version = "1"
 abi_file = "abi/ERC20TokenWith3009.json"
+signature_format = "separate_vrs"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -292,6 +307,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -324,6 +340,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -353,6 +370,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -369,6 +387,7 @@ decimals = 6
 eip712_name = "Test USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 test_usdc = "0x1111111111111111111111111111111111111111"
@@ -416,6 +435,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -432,6 +452,7 @@ decimals = 6
 eip712_name = "Test USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 test_usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
@@ -469,6 +490,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 "#;
 
         let main_path = "/tmp/tokens_test_dir/tokens.toml";
@@ -485,6 +507,7 @@ decimals = 6
 eip712_name = "Test"
 eip712_version = "1"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 "#;
 
         std::fs::write("/tmp/tokens_test_dir/custom/tokens-custom.toml", custom_toml).unwrap();

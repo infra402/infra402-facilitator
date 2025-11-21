@@ -7,4 +7,5 @@
 pub mod config;
 pub mod manager;
 
+pub use config::SignatureFormat;
 pub use manager::TokenManager;

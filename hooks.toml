@@ -16,7 +16,7 @@ allow_hook_failure = false
 
 # Optional: Path to custom hooks file (disabled by default)
 # Uncomment to enable custom hooks (see hooks-custom.toml.example)
-# custom_hooks_file = "hooks-custom.toml"
+custom_hooks_file = "hooks-custom.toml"
 
 # ============================================================================
 # Hook Definitions (shared across all networks)

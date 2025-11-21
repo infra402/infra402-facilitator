@@ -131,6 +131,16 @@ impl TokenManager {
             .map(|def| def.abi_file.clone())
     }
 
+    /// Get signature format for a token
+    pub async fn get_signature_format(&self, token_name: &str) -> Option<super::config::SignatureFormat> {
+        let state = self.state.read().await;
+        state
+            .settings
+            .definitions
+            .get(token_name)
+            .map(|def| def.signature_format)
+    }
+
     /// Reload configuration from disk
     pub async fn reload(&self) -> Result<(), String> {
         let config = TokenConfig::from_file(&self.config_path).map_err(|e| e.to_string())?;
@@ -218,6 +228,7 @@ decimals = 6
 eip712_name = "USD Coin"
 eip712_version = "2"
 abi_file = "abi/USDC.json"
+signature_format = "packed_bytes"
 
 [tokens.networks.base-sepolia]
 usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
