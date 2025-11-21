@@ -36,7 +36,13 @@ impl TokenManager {
 
         // Build reverse lookup cache (address → token_name) for each network
         // Custom tokens are already merged into config.tokens.networks by TokenConfig::from_file
+        // Note: Skip non-EVM networks (Solana) as they use different address formats (base58 vs hex)
         for (network_name, network_tokens) in &config.tokens.networks {
+            // Skip Solana networks - they use base58 addresses, not EVM hex addresses
+            if network_name == "solana" || network_name == "solana-devnet" {
+                continue;
+            }
+
             let mut network_cache = HashMap::new();
 
             for (token_name, address_str) in &network_tokens.tokens {

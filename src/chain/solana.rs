@@ -519,7 +519,10 @@ impl SolanaProvider {
 }
 
 impl FromEnvByNetworkBuild for SolanaProvider {
-    async fn from_env(network: Network) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    async fn from_env(
+        network: Network,
+        _token_manager: Option<&std::sync::Arc<crate::tokens::TokenManager>>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let env_var = from_env::rpc_env_name_from_network(network);
         let rpc_url = match std::env::var(env_var).ok() {
             Some(rpc_url) => rpc_url,

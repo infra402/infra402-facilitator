@@ -29,6 +29,7 @@ use tokio::sync::RwLock;
 use crate::chain::FromEnvByNetworkBuild;
 use crate::chain::NetworkProvider;
 use crate::network::Network;
+use crate::tokens::TokenManager;
 
 /// Cached EIP-712 domain information for a token contract.
 #[derive(Clone, Debug)]
@@ -102,9 +103,15 @@ impl ProviderCache {
     ///
     /// Fails if required env vars are missing or if the provider cannot connect.
     pub async fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        // Create shared TokenManager once for all EVM providers
+        let token_manager = Arc::new(
+            TokenManager::new("tokens.toml")
+                .map_err(|e| format!("Failed to load TokenManager: {}", e))?
+        );
+
         let mut providers = HashMap::new();
         for network in Network::variants() {
-            let network_provider = NetworkProvider::from_env(*network).await?;
+            let network_provider = NetworkProvider::from_env(*network, Some(&token_manager)).await?;
             if let Some(network_provider) = network_provider {
                 providers.insert(*network, Arc::new(network_provider));
             }

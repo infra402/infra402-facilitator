@@ -1,9 +1,11 @@
+use std::sync::Arc;
 use std::time::SystemTimeError;
 
 use crate::chain::evm::EvmProvider;
 use crate::chain::solana::SolanaProvider;
 use crate::facilitator::Facilitator;
 use crate::network::{Network, NetworkFamily};
+use crate::tokens::TokenManager;
 use crate::types::{
     MixedAddress, Scheme, SettleRequest, SettleResponse, SupportedPaymentKindsResponse,
     VerifyRequest, VerifyResponse,
@@ -20,19 +22,23 @@ pub enum NetworkProvider {
 pub trait FromEnvByNetworkBuild: Sized {
     fn from_env(
         network: Network,
+        token_manager: Option<&Arc<TokenManager>>,
     ) -> impl Future<Output = Result<Option<Self>, Box<dyn std::error::Error>>> + Send;
 }
 
 impl FromEnvByNetworkBuild for NetworkProvider {
-    async fn from_env(network: Network) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    async fn from_env(
+        network: Network,
+        token_manager: Option<&Arc<TokenManager>>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let family: NetworkFamily = network.into();
         let provider = match family {
             NetworkFamily::Evm => {
-                let provider = EvmProvider::from_env(network).await?;
+                let provider = EvmProvider::from_env(network, token_manager).await?;
                 provider.map(NetworkProvider::Evm)
             }
             NetworkFamily::Solana => {
-                let provider = SolanaProvider::from_env(network).await?;
+                let provider = SolanaProvider::from_env(network, token_manager).await?;
                 provider.map(NetworkProvider::Solana)
             }
         };

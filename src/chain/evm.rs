@@ -48,6 +48,7 @@ use crate::from_env;
 use crate::hooks::{HookCall, HookManager, RuntimeContext};
 use crate::network::{Network, USDCDeployment};
 use crate::timestamp::UnixTimestamp;
+use crate::tokens::TokenManager;
 use crate::types::{
     EvmAddress, EvmSignature, ExactPaymentPayload, FacilitatorErrorReason, HexEncodedNonce,
     MixedAddress, PaymentPayload, PaymentRequirements, Scheme, SettleRequest, SettleResponse,
@@ -100,19 +101,6 @@ const VALIDATOR_ADDRESS: alloy::primitives::Address =
 // This allows settle_with_lock() to pass the locked address to send_transaction().
 tokio::task_local! {
     pub static PRESELECTED_FACILITATOR: Address;
-}
-
-/// ABI signature variant for ERC-3009 transferWithAuthorization.
-///
-/// Different token implementations use different signature parameter formats:
-/// - BytesSignature: signature passed as single bytes parameter (e.g., USDC)
-/// - SplitSignature: signature passed as (v, r, s) components (e.g., XBNB, ERC20TokenWith3009)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AbiVariant {
-    /// Signature as bytes: transferWithAuthorization(..., bytes signature)
-    BytesSignature,
-    /// Signature as components: transferWithAuthorization(..., uint8 v, bytes32 r, bytes32 s)
-    SplitSignature,
 }
 
 /// Unified enum for ERC-3009 compatible token contracts (USDC, XBNB, and ERC20TokenWith3009).
@@ -233,6 +221,8 @@ pub struct EvmProvider {
     nonce_manager: PendingNonceManager,
     /// EIP-712 version cache shared across all providers
     eip712_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
+    /// Token manager for dynamic contract selection based on token configuration
+    token_manager: Arc<TokenManager>,
 }
 
 impl EvmProvider {
@@ -242,6 +232,7 @@ impl EvmProvider {
         rpc_url: &str,
         eip1559: bool,
         network: Network,
+        token_manager: Arc<TokenManager>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let chain = EvmChain::try_from(network)?;
         let signer_addresses: Vec<Address> =
@@ -369,6 +360,7 @@ impl EvmProvider {
             settlement_locks: Arc::new(DashMap::new()),
             nonce_manager,
             eip712_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            token_manager,
         })
     }
 
@@ -439,6 +431,8 @@ pub trait MetaEvmProvider {
     fn chain(&self) -> &EvmChain;
     /// Returns reference to EIP-712 version cache.
     fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>;
+    /// Returns reference to token manager for dynamic contract selection.
+    fn token_manager(&self) -> &TokenManager;
 
     /// Sends a meta-transaction to the network.
     fn send_transaction(
@@ -474,6 +468,10 @@ impl MetaEvmProvider for EvmProvider {
 
     fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>> {
         &self.eip712_version_cache
+    }
+
+    fn token_manager(&self) -> &TokenManager {
+        &self.token_manager
     }
 
     /// Send a meta-transaction with provided `to`, `calldata`, and automatically selected signer.
@@ -612,7 +610,10 @@ impl NetworkProviderOps for EvmProvider {
 }
 
 impl FromEnvByNetworkBuild for EvmProvider {
-    async fn from_env(network: Network) -> Result<Option<Self>, Box<dyn std::error::Error>> {
+    async fn from_env(
+        network: Network,
+        token_manager: Option<&Arc<TokenManager>>,
+    ) -> Result<Option<Self>, Box<dyn std::error::Error>> {
         let env_var = from_env::rpc_env_name_from_network(network);
         let rpc_url = match std::env::var(env_var).ok() {
             Some(rpc_url) => rpc_url,
@@ -637,7 +638,18 @@ impl FromEnvByNetworkBuild for EvmProvider {
             Network::BscTestnet => false,
             Network::Bsc => false,
         };
-        let provider = EvmProvider::try_new(wallet, &rpc_url, is_eip1559, network).await?;
+
+        // Use shared TokenManager if provided, otherwise create one (for backwards compatibility)
+        let token_manager = if let Some(tm) = token_manager {
+            Arc::clone(tm)
+        } else {
+            Arc::new(
+                TokenManager::new("tokens.toml")
+                    .map_err(|e| format!("Failed to load TokenManager: {}", e))?
+            )
+        };
+
+        let provider = EvmProvider::try_new(wallet, &rpc_url, is_eip1559, network, token_manager).await?;
         Ok(Some(provider))
     }
 }
@@ -667,7 +679,7 @@ where
 
         // Perform payment validation WITHOUT balance check (we'll batch it with signature validation)
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), true).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), true, self.token_manager()).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -958,7 +970,7 @@ where
         let payload = &request.payment_payload;
         let requirements = &request.payment_requirements;
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false, self.token_manager()).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -1194,7 +1206,7 @@ impl EvmProvider {
 
         // Validate payment and extract contract, payment data, and EIP-712 domain
         let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false).await?;
+            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false, &self.token_manager).await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -2171,6 +2183,7 @@ async fn assert_valid_payment<P: Provider + Clone>(
     requirements: &PaymentRequirements,
     version_cache: Option<&Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>>,
     skip_balance_check: bool,
+    token_manager: &TokenManager,
 ) -> Result<(Erc3009Contract<P>, ExactEvmPayment, Eip712Domain), FacilitatorLocalError> {
     let payment_payload = match &payload.payload {
         ExactPaymentPayload::Evm(payload) => payload,
@@ -2226,17 +2239,39 @@ async fn assert_valid_payment<P: Provider + Clone>(
             "Invalid Ethereum address format".to_string()
         ))?;
 
-    // TODO: Integrate TokenManager to determine contract type based on asset_address
-    // The full flow should be: asset_address → TokenManager.get_token_name() →
-    // TokenManager.get_abi_file() → determine_contract_from_abi_file()
-    // For now, use network-based fallback until TokenManager is wired into the call chain
-    let contract = match chain.network {
-        Network::BscTestnet | Network::Bsc => {
-            Erc3009Contract::Xbnb(XBNB::new(asset_address, provider.clone()))
-        }
-        _ => {
+    // Determine contract type based on token configuration via TokenManager
+    // Flow: asset_address → get_token_name() → get_abi_file() → determine_contract_from_abi_file()
+    let network_str = chain.network.to_string();
+    let contract = if let Some(token_name) = token_manager.get_token_name(asset_address, &network_str).await {
+        if let Some(abi_file) = token_manager.get_abi_file(&token_name).await {
+            match determine_contract_from_abi_file(&abi_file, asset_address, provider.clone()) {
+                Ok(contract) => contract,
+                Err(e) => {
+                    tracing::warn!(
+                        token = token_name,
+                        abi_file = abi_file,
+                        asset_address = %asset_address,
+                        error = %e,
+                        "Failed to determine contract from ABI file, falling back to USDC"
+                    );
+                    Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
+                }
+            }
+        } else {
+            tracing::warn!(
+                token = token_name,
+                asset_address = %asset_address,
+                "Token found but no abi_file configured, falling back to USDC"
+            );
             Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
         }
+    } else {
+        tracing::warn!(
+            asset_address = %asset_address,
+            network = network_str,
+            "Token not recognized in configuration, falling back to USDC"
+        );
+        Erc3009Contract::Usdc(USDC::new(asset_address, provider.clone()))
     };
 
     let domain = assert_domain(chain, &contract, payload, &asset_address, requirements, version_cache).await?;
