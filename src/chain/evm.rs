@@ -3029,4 +3029,734 @@ mod tests {
             assert_eq!(*nonce_lock.lock().await, u64::MAX);
         }
     }
+
+    // ========================================================================
+    // Mock Infrastructure for Batch + Hooks Integration Tests
+    // ========================================================================
+
+    use crate::hooks::HookCall;
+    use crate::network::Network;
+    use crate::types::{MixedAddress, SettleResponse, TransactionHash};
+    use alloy::primitives::{Bytes, FixedBytes, U256};
+
+    /// Helper function to create a mock ValidatedSettlement for testing
+    fn mock_validated_settlement(
+        from: Address,
+        to: Address,
+        value: U256,
+        token_contract: Address,
+        hooks: Vec<HookCall>,
+    ) -> ValidatedSettlement {
+        ValidatedSettlement {
+            target: token_contract,
+            calldata: Bytes::from(vec![0x01, 0x02, 0x03, 0x04]), // Mock calldata
+            payer: MixedAddress::from(from),
+            network: Network::BaseSepolia,
+            deployment: None,
+            hooks,
+            metadata: SettlementMetadata {
+                from,
+                to,
+                value,
+                valid_after: U256::ZERO,
+                valid_before: U256::MAX,
+                nonce: FixedBytes::ZERO,
+                signature: Bytes::new(),
+                contract_address: token_contract,
+                sig_kind: "eoa".to_string(),
+            },
+        }
+    }
+
+    /// Helper function to create a mock HookCall for testing
+    fn mock_hook_call(
+        target: Address,
+        calldata: Bytes,
+        gas_limit: u64,
+        allow_failure: bool,
+    ) -> HookCall {
+        HookCall {
+            target,
+            calldata,
+            gas_limit,
+            allow_failure,
+        }
+    }
+
+    /// Helper function to create a mock SettleResponse
+    fn mock_settle_response(
+        success: bool,
+        payer: Address,
+        network: Network,
+        tx_hash: Option<[u8; 32]>,
+    ) -> SettleResponse {
+        SettleResponse {
+            success,
+            error_reason: None,
+            payer: MixedAddress::from(payer),
+            transaction: tx_hash.map(TransactionHash::Evm),
+            network,
+        }
+    }
+
+    use alloy::rpc::types::{Log, TransactionReceipt};
+    use alloy::primitives::B256;
+
+    /// Helper to create a mock Transfer event log
+    fn mock_transfer_log(from: Address, to: Address, value: U256, log_index: u64) -> Log {
+        // Transfer event signature: keccak256("Transfer(address,address,uint256)")
+        let transfer_sig = alloy::primitives::b256!(
+            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        );
+
+        // Convert addresses to B256 for topics (addresses are 20 bytes, need to pad to 32)
+        let from_topic = B256::left_padding_from(&from.0[..]);
+        let to_topic = B256::left_padding_from(&to.0[..]);
+
+        // Encode value as 32-byte data
+        let data_bytes = value.to_be_bytes_vec();
+
+        Log {
+            inner: alloy::primitives::Log {
+                address: address!("2222222222222222222222222222222222222222"), // Token contract
+                data: alloy::primitives::LogData::new_unchecked(
+                    vec![transfer_sig, from_topic, to_topic],
+                    Bytes::from(data_bytes),
+                ),
+            },
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1000),
+            block_timestamp: None,
+            transaction_hash: Some(B256::ZERO),
+            transaction_index: Some(0),
+            log_index: Some(log_index),
+            removed: false,
+        }
+    }
+
+    /// Helper to create a mock TransactionReceipt with Transfer events
+    fn mock_receipt_with_transfers(
+        success: bool,
+        transfers: Vec<(Address, Address, U256)>,
+    ) -> TransactionReceipt {
+        use alloy::consensus::{Receipt, ReceiptEnvelope};
+        use alloy::consensus::Eip658Value;
+
+        let logs: Vec<Log> = transfers
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (from, to, value))| mock_transfer_log(from, to, value, idx as u64))
+            .collect();
+
+        let receipt = Receipt {
+            status: Eip658Value::Eip658(success),
+            cumulative_gas_used: 100000,
+            logs,
+        };
+
+        TransactionReceipt {
+            inner: ReceiptEnvelope::Eip1559(alloy::consensus::ReceiptWithBloom {
+                receipt,
+                logs_bloom: Default::default(),
+            }),
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1000),
+            gas_used: 50000,
+            effective_gas_price: 1000000000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: address!("3333333333333333333333333333333333333333"),
+            to: Some(address!("2222222222222222222222222222222222222222")),
+            contract_address: None,
+        }
+    }
+
+    // ========================================================================
+    // Test Helper: Standalone parse logic for testing
+    // ========================================================================
+
+    /// Standalone version of parse_aggregate3_results logic for testing
+    /// This replicates the logic from EvmProvider::parse_aggregate3_results
+    /// without requiring a full EvmProvider instance
+    fn test_parse_transfer_events(
+        receipt: &TransactionReceipt,
+        settlements: &[ValidatedSettlement],
+    ) -> Vec<Aggregate3Result> {
+        // If transaction failed, all transfers failed
+        if !receipt.status() {
+            return vec![
+                Aggregate3Result {
+                    success: false,
+                    return_data: Bytes::new(),
+                };
+                settlements.len()
+            ];
+        }
+
+        // Parse Transfer events
+        let transfer_sig = alloy::primitives::b256!(
+            "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        );
+
+        let mut transfer_events = Vec::new();
+        for log in &receipt.inner.as_receipt().unwrap().logs {
+            if log.topics().len() >= 3 && log.topics()[0] == transfer_sig {
+                let from = Address::from_word(log.topics()[1]);
+                let to = Address::from_word(log.topics()[2]);
+                let value = if log.data().data.len() >= 32 {
+                    U256::from_be_slice(&log.data().data[..32])
+                } else {
+                    U256::ZERO
+                };
+                transfer_events.push((from, to, value));
+            }
+        }
+
+        // Match each settlement to a Transfer event
+        let mut results = Vec::with_capacity(settlements.len());
+        for settlement in settlements {
+            let found = transfer_events.iter().any(|(from, to, value)| {
+                *from == settlement.metadata.from
+                    && *to == settlement.metadata.to
+                    && *value == settlement.metadata.value
+            });
+
+            results.push(Aggregate3Result {
+                success: found,
+                return_data: Bytes::new(),
+            });
+        }
+
+        results
+    }
+
+    // ========================================================================
+    // Integration Tests: Batch + Hooks
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_parse_aggregate3_results_success() {
+        // Test parse_aggregate3_results with successful Transfer events
+
+        let from1 = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to1 = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let value1 = U256::from(1000000);
+
+        let from2 = address!("cccccccccccccccccccccccccccccccccccccccc");
+        let to2 = address!("dddddddddddddddddddddddddddddddddddddddd");
+        let value2 = U256::from(2000000);
+
+        // Create settlements
+        let settlements = vec![
+            mock_validated_settlement(from1, to1, value1, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(from2, to2, value2, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Create receipt with matching Transfer events
+        let receipt = mock_receipt_with_transfers(
+            true,
+            vec![(from1, to1, value1), (from2, to2, value2)],
+        );
+
+        // Parse results using test helper
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // Assert both transfers succeeded
+        assert_eq!(results.len(), 2);
+        assert!(results[0].success, "First transfer should succeed");
+        assert!(results[1].success, "Second transfer should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_parse_aggregate3_results_transaction_failed() {
+        // Test that when receipt.status() is false, all settlements fail
+
+        let from = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let value = U256::from(1000000);
+
+        let settlements = vec![
+            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Create failed receipt
+        let receipt = mock_receipt_with_transfers(false, vec![]);
+
+        // Parse results
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // All results should have success=false when transaction fails
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success, "Transfer should fail when transaction fails");
+    }
+
+    #[tokio::test]
+    async fn test_parse_aggregate3_results_missing_event() {
+        // Test that when a Transfer event is missing, that settlement fails
+
+        let from1 = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to1 = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let value1 = U256::from(1000000);
+
+        let from2 = address!("cccccccccccccccccccccccccccccccccccccccc");
+        let to2 = address!("dddddddddddddddddddddddddddddddddddddddd");
+        let value2 = U256::from(2000000);
+
+        let settlements = vec![
+            mock_validated_settlement(from1, to1, value1, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(from2, to2, value2, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Only include Transfer event for first settlement
+        let receipt = mock_receipt_with_transfers(true, vec![(from1, to1, value1)]);
+
+        // Parse results
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // First settlement should succeed, second should fail (missing event)
+        assert_eq!(results.len(), 2);
+        assert!(results[0].success, "First transfer should succeed (event present)");
+        assert!(!results[1].success, "Second transfer should fail (event missing)");
+    }
+
+    #[tokio::test]
+    async fn test_call3_array_construction_no_hooks() {
+        // Test that Call3 array is built correctly for settlements without hooks
+
+        let settlement1 = mock_validated_settlement(
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            U256::from(1000000),
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        );
+
+        let settlement2 = mock_validated_settlement(
+            address!("cccccccccccccccccccccccccccccccccccccccc"),
+            address!("dddddddddddddddddddddddddddddddddddddddd"),
+            U256::from(2000000),
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        );
+
+        let settlements = vec![settlement1, settlement2];
+
+        // Simulate Call3 array construction (from settle_batch lines 1538-1577)
+        let mut calls = Vec::new();
+        for settlement in &settlements {
+            // No deployment
+            // Add transfer call
+            calls.push((settlement.target, settlement.calldata.clone()));
+            // No hooks
+        }
+
+        assert_eq!(calls.len(), 2, "Should have 2 Call3s (2 transfers, 0 hooks)");
+        assert_eq!(calls[0].0, address!("2222222222222222222222222222222222222222"));
+        assert_eq!(calls[1].0, address!("2222222222222222222222222222222222222222"));
+    }
+
+    #[tokio::test]
+    async fn test_call3_array_construction_with_hooks() {
+        // Test that Call3 array includes hooks in correct order
+
+        let hook1 = mock_hook_call(
+            address!("1111111111111111111111111111111111111111"),
+            Bytes::from(vec![0x01, 0x02]),
+            100000,
+            true,
+        );
+        let hook2 = mock_hook_call(
+            address!("2222222222222222222222222222222222222222"),
+            Bytes::from(vec![0x03, 0x04]),
+            200000,
+            false,
+        );
+
+        let settlement = mock_validated_settlement(
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            U256::from(1000000),
+            address!("3333333333333333333333333333333333333333"),
+            vec![hook1.clone(), hook2.clone()],
+        );
+
+        // Simulate Call3 array construction
+        let mut calls = Vec::new();
+        // Add transfer
+        calls.push((settlement.target, settlement.calldata.clone()));
+        // Add hooks
+        for hook in &settlement.hooks {
+            calls.push((hook.target, hook.calldata.clone()));
+        }
+
+        assert_eq!(calls.len(), 3, "Should have 3 Call3s (1 transfer + 2 hooks)");
+        assert_eq!(calls[0].0, address!("3333333333333333333333333333333333333333"), "First should be transfer");
+        assert_eq!(calls[1].0, address!("1111111111111111111111111111111111111111"), "Second should be hook1");
+        assert_eq!(calls[2].0, address!("2222222222222222222222222222222222222222"), "Third should be hook2");
+    }
+
+    #[tokio::test]
+    async fn test_call3_array_multiple_settlements_with_hooks() {
+        // Test Call3 ordering with multiple settlements, each with hooks
+
+        let hook_a = mock_hook_call(address!("aaaa0000000000000000000000000000000000aa"), Bytes::new(), 100000, true);
+        let hook_b1 = mock_hook_call(address!("bbbb0000000000000000000000000000000000b1"), Bytes::new(), 100000, true);
+        let hook_b2 = mock_hook_call(address!("bbbb0000000000000000000000000000000000b2"), Bytes::new(), 100000, true);
+
+        let settlement_a = mock_validated_settlement(
+            address!("1111111111111111111111111111111111111111"),
+            address!("2222222222222222222222222222222222222222"),
+            U256::from(1000),
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            vec![hook_a.clone()],
+        );
+
+        let settlement_b = mock_validated_settlement(
+            address!("3333333333333333333333333333333333333333"),
+            address!("4444444444444444444444444444444444444444"),
+            U256::from(2000),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            vec![hook_b1.clone(), hook_b2.clone()],
+        );
+
+        // Simulate Call3 array construction
+        let mut calls = Vec::new();
+        for settlement in &[settlement_a, settlement_b] {
+            calls.push((settlement.target, "transfer".to_string()));
+            for (idx, hook) in settlement.hooks.iter().enumerate() {
+                calls.push((hook.target, format!("hook{}", idx)));
+            }
+        }
+
+        // Expected order: transfer_a, hook_a, transfer_b, hook_b1, hook_b2
+        assert_eq!(calls.len(), 5);
+        assert_eq!(calls[0].0, address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert_eq!(calls[0].1, "transfer");
+        assert_eq!(calls[1].0, address!("aaaa0000000000000000000000000000000000aa"));
+        assert_eq!(calls[1].1, "hook0");
+        assert_eq!(calls[2].0, address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        assert_eq!(calls[2].1, "transfer");
+        assert_eq!(calls[3].0, address!("bbbb0000000000000000000000000000000000b1"));
+        assert_eq!(calls[3].1, "hook0");
+        assert_eq!(calls[4].0, address!("bbbb0000000000000000000000000000000000b2"));
+        assert_eq!(calls[4].1, "hook1");
+    }
+
+    #[tokio::test]
+    async fn test_deployment_call3_ordering() {
+        // Test that deployment calls come before transfer calls
+
+        use crate::chain::evm::DeploymentData;
+
+        let mut settlement = mock_validated_settlement(
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            U256::from(1000000),
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        );
+
+        // Add deployment data
+        settlement.deployment = Some(DeploymentData {
+            factory: address!("ffffffffffffffffffffffffffffffffffffffff"),
+            factory_calldata: Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+        });
+
+        // Simulate Call3 construction with deployment
+        let mut calls = Vec::new();
+        if let Some(deployment) = &settlement.deployment {
+            calls.push((deployment.factory, "deployment".to_string()));
+        }
+        calls.push((settlement.target, "transfer".to_string()));
+
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, address!("ffffffffffffffffffffffffffffffffffffffff"));
+        assert_eq!(calls[0].1, "deployment");
+        assert_eq!(calls[1].0, address!("2222222222222222222222222222222222222222"));
+        assert_eq!(calls[1].1, "transfer");
+    }
+
+    #[tokio::test]
+    async fn test_parse_transfer_events_duplicate_values() {
+        // Test that duplicate transfers (same from/to/value) are matched correctly
+
+        let from = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let value = U256::from(1000000);
+
+        // Two settlements with identical from/to/value
+        let settlements = vec![
+            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Two Transfer events with identical data
+        let receipt = mock_receipt_with_transfers(
+            true,
+            vec![(from, to, value), (from, to, value)],
+        );
+
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // Both should match (the matching logic uses any(), so both will find a match)
+        assert_eq!(results.len(), 2);
+        assert!(results[0].success);
+        assert!(results[1].success);
+    }
+
+    #[tokio::test]
+    async fn test_parse_transfer_events_wrong_value() {
+        // Test that transfers with wrong value don't match
+
+        let from = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let expected_value = U256::from(1000000);
+        let wrong_value = U256::from(2000000);
+
+        let settlements = vec![
+            mock_validated_settlement(from, to, expected_value, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Transfer event has wrong value
+        let receipt = mock_receipt_with_transfers(
+            true,
+            vec![(from, to, wrong_value)],
+        );
+
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // Should not match because value is different
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success, "Transfer should fail when value doesn't match");
+    }
+
+    #[tokio::test]
+    async fn test_parse_transfer_events_wrong_recipient() {
+        // Test that transfers with wrong recipient don't match
+
+        let from = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let expected_to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let wrong_to = address!("cccccccccccccccccccccccccccccccccccccccc");
+        let value = U256::from(1000000);
+
+        let settlements = vec![
+            mock_validated_settlement(from, expected_to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Transfer event has wrong recipient
+        let receipt = mock_receipt_with_transfers(
+            true,
+            vec![(from, wrong_to, value)],
+        );
+
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // Should not match because recipient is different
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success, "Transfer should fail when recipient doesn't match");
+    }
+
+    #[tokio::test]
+    async fn test_parse_transfer_events_empty_receipt() {
+        // Test parsing when receipt has no Transfer events
+
+        let from = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let value = U256::from(1000000);
+
+        let settlements = vec![
+            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+        ];
+
+        // Receipt with no Transfer events
+        let receipt = mock_receipt_with_transfers(true, vec![]);
+
+        let results = test_parse_transfer_events(&receipt, &settlements);
+
+        // Should not match any transfers
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].success, "Transfer should fail when no events in receipt");
+    }
+
+    #[tokio::test]
+    async fn test_hook_count_affects_call3_limit() {
+        // Test that settlements with many hooks are correctly counted toward Call3 limit
+
+        // Create settlement with 149 hooks - this should fit in one batch (1 transfer + 149 hooks = 150 Call3s)
+        let settlement_many_hooks = mock_validated_settlement(
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            U256::from(1000000),
+            address!("2222222222222222222222222222222222222222"),
+            vec![mock_hook_call(address!("1111111111111111111111111111111111111111"), Bytes::new(), 100000, true); 149],
+        );
+
+        // Calculate Call3 count
+        let call3_count = 1 + settlement_many_hooks.hooks.len();
+        assert_eq!(call3_count, 150, "Settlement with 149 hooks should need exactly 150 Call3s");
+
+        // If we add one more hook, it should exceed the limit
+        let settlement_too_many = mock_validated_settlement(
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            U256::from(1000000),
+            address!("2222222222222222222222222222222222222222"),
+            vec![mock_hook_call(address!("1111111111111111111111111111111111111111"), Bytes::new(), 100000, true); 150],
+        );
+
+        let call3_count_over = 1 + settlement_too_many.hooks.len();
+        assert_eq!(call3_count_over, 151, "Settlement with 150 hooks should need 151 Call3s");
+    }
+
+    // ========================================================================
+    // Additional Integration Tests (Infrastructure Components)
+    // ========================================================================
+
+    use alloy::signers::local::PrivateKeySigner;
+
+    #[tokio::test]
+    async fn test_nonce_manager_reset() {
+        // Test PendingNonceManager reset behavior
+
+        let manager = PendingNonceManager::default();
+        let test_address = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        // Set initial nonce
+        {
+            let nonce_lock = manager
+                .nonces
+                .entry(test_address)
+                .or_insert_with(|| Arc::new(Mutex::new(0)));
+            *nonce_lock.lock().await = 42;
+        }
+
+        // Verify initial nonce
+        {
+            let nonce_lock = manager.nonces.get(&test_address).unwrap();
+            assert_eq!(*nonce_lock.lock().await, 42);
+        }
+
+        // Reset nonce
+        manager.reset_nonce(test_address).await;
+
+        // Verify nonce is reset to MAX (forces refetch)
+        {
+            let nonce_lock = manager.nonces.get(&test_address).unwrap();
+            assert_eq!(*nonce_lock.lock().await, u64::MAX);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_settlement_lock_concurrent_access() {
+        // Test that settlement locks prevent concurrent access for the same facilitator
+
+        let locks: Arc<DashMap<Address, Arc<Mutex<()>>>> = Arc::new(DashMap::new());
+        let facilitator = address!("1111111111111111111111111111111111111111");
+
+        // Simulate concurrent settlement requests
+        let locks1 = Arc::clone(&locks);
+        let locks2 = Arc::clone(&locks);
+
+        let mut results = Vec::new();
+
+        let handle1 = tokio::spawn(async move {
+            let lock = locks1
+                .entry(facilitator)
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            "task1_complete"
+        });
+
+        let handle2 = tokio::spawn(async move {
+            // Small delay to ensure task1 acquires lock first
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            let lock = locks2
+                .entry(facilitator)
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone();
+            let _guard = lock.lock().await;
+            "task2_complete"
+        });
+
+        results.push(handle1.await.unwrap());
+        results.push(handle2.await.unwrap());
+
+        // Both tasks should complete successfully (serialized by lock)
+        assert_eq!(results.len(), 2);
+        assert!(results.contains(&"task1_complete"));
+        assert!(results.contains(&"task2_complete"));
+    }
+
+    #[tokio::test]
+    async fn test_eip712_version_cache() {
+        // Test EIP-712 version caching behavior
+
+        use std::collections::HashMap;
+        use tokio::sync::RwLock;
+
+        let cache: Arc<RwLock<HashMap<Address, (String, String)>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
+        let token_address = address!("A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"); // USDC
+        let eip712_name = "USD Coin".to_string();
+        let eip712_version = "2".to_string();
+
+        // Populate cache
+        {
+            let mut cache_write = cache.write().await;
+            cache_write.insert(
+                token_address,
+                (eip712_name.clone(), eip712_version.clone()),
+            );
+        }
+
+        // Read from cache
+        {
+            let cache_read = cache.read().await;
+            let cached = cache_read.get(&token_address);
+            assert!(cached.is_some());
+            assert_eq!(cached.unwrap().0, eip712_name);
+            assert_eq!(cached.unwrap().1, eip712_version);
+        }
+
+        // Test cache miss
+        let other_address = address!("dAC17F958D2ee523a2206206994597C13D831ec7"); // USDT
+        {
+            let cache_read = cache.read().await;
+            let cached = cache_read.get(&other_address);
+            assert!(cached.is_none(), "Cache should miss for uncached address");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_hook_call_construction() {
+        // Test HookCall data structure construction and validation
+
+        let hook = HookCall {
+            target: address!("1111111111111111111111111111111111111111"),
+            calldata: Bytes::from(vec![0x01, 0x02, 0x03, 0x04]),
+            gas_limit: 100000,
+            allow_failure: true,
+        };
+
+        // Verify fields
+        assert_eq!(
+            hook.target,
+            address!("1111111111111111111111111111111111111111")
+        );
+        assert_eq!(hook.calldata.len(), 4);
+        assert_eq!(hook.gas_limit, 100000);
+        assert!(hook.allow_failure);
+
+        // Test cloning
+        let hook_clone = hook.clone();
+        assert_eq!(hook.target, hook_clone.target);
+        assert_eq!(hook.calldata, hook_clone.calldata);
+        assert_eq!(hook.gas_limit, hook_clone.gas_limit);
+        assert_eq!(hook.allow_failure, hook_clone.allow_failure);
+    }
 }

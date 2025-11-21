@@ -96,6 +96,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let facilitator = FacilitatorLocal::new(provider_cache);
     let axum_state = Arc::new(facilitator);
 
+    // Initialize hook manager first (needed by batch queue manager)
+    let hook_manager = match crate::hooks::HookManager::new("hooks.toml") {
+        Ok(manager) => {
+            tracing::info!("Hook manager initialized successfully");
+            Some(Arc::new(manager))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to initialize hook manager - hooks will be disabled");
+            None
+        }
+    };
+
     // Initialize batch queue manager if enabled globally or for any network
     let batch_queue_manager = if app_config.batch_settlement.is_enabled_anywhere() {
         tracing::info!(
@@ -134,24 +146,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let manager = Arc::new(crate::batch_queue::BatchQueueManager::new(
             app_config.batch_settlement.clone(),
+            hook_manager.clone(),
         ));
 
         Some(manager)
     } else {
         tracing::info!("Batch settlement disabled globally - using direct settlement for all networks");
         None
-    };
-
-    // Initialize hook manager
-    let hook_manager = match crate::hooks::HookManager::new("hooks.toml") {
-        Ok(manager) => {
-            tracing::info!("Hook manager initialized successfully");
-            Some(Arc::new(manager))
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to initialize hook manager - hooks will be disabled");
-            None
-        }
     };
 
     // Initialize security components

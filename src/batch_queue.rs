@@ -25,14 +25,17 @@ pub struct BatchQueueManager {
     queues: Arc<DashMap<(Address, Network), Arc<BatchQueue>>>,
     /// Configuration for batch settlement
     config: BatchSettlementConfig,
+    /// Hook manager for executing hooks alongside settlements
+    hook_manager: Option<Arc<crate::hooks::HookManager>>,
 }
 
 impl BatchQueueManager {
     /// Creates a new BatchQueueManager with the given configuration.
-    pub fn new(config: BatchSettlementConfig) -> Self {
+    pub fn new(config: BatchSettlementConfig, hook_manager: Option<Arc<crate::hooks::HookManager>>) -> Self {
         Self {
             queues: Arc::new(DashMap::new()),
             config,
+            hook_manager,
         }
     }
 
@@ -77,6 +80,7 @@ impl BatchQueueManager {
                     network_config.min_batch_size,
                     facilitator_addr,
                     network,
+                    self.hook_manager.clone(),
                 ))
             })
             .clone();
@@ -156,6 +160,8 @@ pub struct BatchQueue {
     network: Network,
     /// Flag indicating whether a background processing task is currently running
     task_running: Arc<AtomicBool>,
+    /// Hook manager for executing hooks alongside settlements
+    hook_manager: Option<Arc<crate::hooks::HookManager>>,
 }
 
 impl BatchQueue {
@@ -166,6 +172,7 @@ impl BatchQueue {
         min_batch_size: usize,
         facilitator_addr: Address,
         network: Network,
+        hook_manager: Option<Arc<crate::hooks::HookManager>>,
     ) -> Self {
         Self {
             pending: Arc::new(Mutex::new(Vec::new())),
@@ -175,6 +182,7 @@ impl BatchQueue {
             facilitator_addr,
             network,
             task_running: Arc::new(AtomicBool::new(false)),
+            hook_manager,
         }
     }
 
@@ -273,6 +281,7 @@ impl BatchQueue {
             self.facilitator_addr,
             batch,
             allow_partial_failure,
+            self.hook_manager.as_ref(),
         )
         .await
     }
