@@ -1,0 +1,118 @@
+# Custom Hooks Configuration Example
+#
+# Copy this file to hooks-custom.toml and customize with your test/development hooks.
+# The hooks-custom.toml file is gitignored to keep local test configurations private.
+#
+# IMPORTANT:
+# - Custom hooks are merged with production hooks at load time
+# - Hook definitions here can override or extend production hooks
+# - Use environment variables for addresses to keep secrets out of git
+#
+# To enable custom hooks:
+# 1. Copy this file: cp hooks-custom.toml.example hooks-custom.toml
+# 2. Edit hooks-custom.toml with your hook definitions and contract addresses
+# 3. Set required environment variables in your .env file
+# 4. Uncomment custom_hooks_file in hooks.toml
+
+[hooks]
+
+# ============================================================================
+# Custom Hook Definitions
+# ============================================================================
+# Define your custom hooks here.
+# These definitions can override or extend the production definitions.
+
+# Example: Token minting callback hook for Base Sepolia testnet
+[hooks.definitions.token_mint_callback]
+enabled = true
+description = "EIP3009 token minting with callback"
+function_signature = "onPaymentReceived(address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
+
+# Parameter 1: from (payer address)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+# Parameter 2: value (transfer amount)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+# Parameter 3: validAfter (EIP-3009 timestamp)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validafter" }
+
+# Parameter 4: validBefore (EIP-3009 timestamp)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validbefore" }
+
+# Parameter 5: nonce (EIP-3009 unique nonce)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "nonce" }
+
+# Parameter 6: v (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "uint8"
+source = { source_type = "payment", field = "signaturev" }
+
+# Parameter 7: r (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signaturer" }
+
+# Parameter 8: s (signature component)
+[[hooks.definitions.token_mint_callback.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signatures" }
+
+# ============================================================================
+# Custom Network Configurations
+# ============================================================================
+# Configure custom hooks for specific networks and recipients.
+
+# Base Sepolia testnet configuration
+[hooks.networks.base-sepolia]
+enabled = true
+
+# Recipient address → hook names mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
+# Set TOKEN_MINT_RECIPIENT_BASE_SEPOLIA in your .env file
+[hooks.networks.base-sepolia.mappings]
+"${TOKEN_MINT_RECIPIENT_BASE_SEPOLIA}" = ["token_mint_callback"]
+
+# Hook name → contract address mapping for this network
+# Supports environment variable substitution: "${ENV_VAR_NAME}"
+# Set HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT in your .env file
+[hooks.networks.base-sepolia.contracts]
+token_mint_callback = "${HOOK_TOKEN_MINT_CALLBACK_BASE_SEPOLIA_CONTRACT}"
+
+# Token filters (optional): Restrict hooks to specific payment tokens
+# If not specified, hooks accept all tokens
+# Token names must match those defined in tokens.toml
+[hooks.networks.base-sepolia.token_filters]
+# Only trigger token_mint_callback for USDC payments
+token_mint_callback = ["usdc"]
+# Examples of other filter configurations:
+# multi_token_hook = ["usdc", "xbnb"]  # Accept multiple tokens
+# any_token_hook = "*"  # Accept any token (same as omitting filter)
+
+# ============================================================================
+# Add Custom Hooks for Other Networks
+# ============================================================================
+# You can add custom hook configurations for other networks here.
+# Example:
+#
+# [hooks.networks.polygon-amoy]
+# enabled = true
+#
+# [hooks.networks.polygon-amoy.mappings]
+# "${MY_RECIPIENT_POLYGON}" = ["my_custom_hook"]
+#
+# [hooks.networks.polygon-amoy.contracts]
+# my_custom_hook = "${MY_HOOK_CONTRACT_POLYGON}"
+#
+# [hooks.networks.polygon-amoy.token_filters]
+# my_custom_hook = ["usdc"]

@@ -515,6 +515,12 @@ pub struct HookSettings {
     #[serde(default)]
     pub allow_hook_failure: bool,
 
+    /// Optional path to custom hooks file (e.g., "hooks-custom.toml")
+    /// Set to null to disable custom hooks. Supports relative or absolute paths.
+    /// Custom hooks will be merged with production hooks at load time.
+    #[serde(default)]
+    pub custom_hooks_file: Option<String>,
+
     /// Hook definitions shared across all networks
     #[serde(default)]
     pub definitions: HashMap<String, HookDefinition>,
@@ -534,6 +540,7 @@ impl Default for HookSettings {
         Self {
             enabled: true,
             allow_hook_failure: false,
+            custom_hooks_file: None,
             definitions: HashMap::new(),
             networks: HashMap::new(),
             mappings: HashMap::new(),
@@ -543,6 +550,25 @@ impl Default for HookSettings {
 
 fn default_true() -> bool {
     true
+}
+
+/// Custom hook configuration loaded from separate file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomHookConfig {
+    #[serde(default)]
+    pub hooks: CustomHookSettings,
+}
+
+/// Custom hook settings (subset of HookSettings)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CustomHookSettings {
+    /// Custom hook definitions
+    #[serde(default)]
+    pub definitions: HashMap<String, HookDefinition>,
+
+    /// Custom per-network hook configurations
+    #[serde(default)]
+    pub networks: HashMap<String, NetworkHookConfig>,
 }
 
 impl HookSettings {
@@ -617,17 +643,147 @@ impl HookSettings {
 }
 
 impl HookConfig {
-    /// Load hook configuration from TOML file
+    /// Load hook configuration from TOML file with optional custom hooks
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let content = std::fs::read_to_string(path)?;
-        let config: HookConfig = toml::from_str(&content)?;
+        let mut config: HookConfig = toml::from_str(&content)?;
 
-        // Validate all hook definitions
+        // Load and merge custom hooks if configured
+        if let Some(ref custom_file) = config.hooks.custom_hooks_file {
+            let custom_path = Self::resolve_path(path, custom_file);
+
+            match Self::load_custom_hooks(&custom_path) {
+                Ok(custom_config) => {
+                    Self::merge_custom_hooks(&mut config.hooks, custom_config)?;
+                    tracing::info!(
+                        custom_file = custom_path,
+                        "Loaded and merged custom hooks"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        custom_file = custom_path,
+                        error = %e,
+                        "Failed to load custom hooks file (continuing without custom hooks)"
+                    );
+                }
+            }
+        } else {
+            tracing::debug!("Custom hooks disabled (custom_hooks_file not configured)");
+        }
+
+        // Validate all hook definitions (including merged custom hooks)
         for (name, hook) in &config.hooks.definitions {
             hook.validate().map_err(|e| format!("Hook '{}' validation failed: {}", name, e))?;
         }
 
+        tracing::info!(
+            path = path,
+            definitions_count = config.hooks.definitions.len(),
+            networks_count = config.hooks.networks.len(),
+            "Loaded hook configuration"
+        );
+
         Ok(config)
+    }
+
+    /// Resolve custom hook file path (relative to hooks.toml or absolute)
+    fn resolve_path(base_config_path: &str, custom_file: &str) -> String {
+        let custom_path = std::path::Path::new(custom_file);
+
+        if custom_path.is_absolute() {
+            custom_file.to_string()
+        } else {
+            // Relative to hooks.toml directory
+            if let Some(parent) = std::path::Path::new(base_config_path).parent() {
+                parent.join(custom_file).to_string_lossy().to_string()
+            } else {
+                custom_file.to_string()
+            }
+        }
+    }
+
+    /// Load custom hooks from separate file
+    fn load_custom_hooks(path: &str) -> Result<CustomHookConfig, Box<dyn std::error::Error>> {
+        let content = std::fs::read_to_string(path)?;
+        let config: CustomHookConfig = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    /// Merge custom hooks into main configuration
+    fn merge_custom_hooks(
+        main: &mut HookSettings,
+        custom: CustomHookConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Merge custom hook definitions
+        for (name, def) in custom.hooks.definitions {
+            if main.definitions.contains_key(&name) {
+                tracing::warn!(
+                    hook = name,
+                    "Custom hook definition overriding production definition"
+                );
+            }
+            main.definitions.insert(name, def);
+        }
+
+        // Merge custom network configurations
+        for (network_name, custom_network) in custom.hooks.networks {
+            let network_config = main.networks.entry(network_name.clone()).or_insert_with(|| NetworkHookConfig {
+                enabled: None,
+                mappings: HashMap::new(),
+                contracts: HashMap::new(),
+                token_filters: HashMap::new(),
+            });
+
+            // Merge mappings
+            for (dest_addr, hook_names) in custom_network.mappings {
+                if network_config.mappings.contains_key(&dest_addr) {
+                    tracing::warn!(
+                        destination = dest_addr,
+                        network = network_name,
+                        "Custom hook mapping overriding existing mapping"
+                    );
+                }
+                network_config.mappings.insert(dest_addr, hook_names);
+            }
+
+            // Merge contract addresses
+            for (hook_name, contract_addr) in custom_network.contracts {
+                if network_config.contracts.contains_key(&hook_name) {
+                    tracing::warn!(
+                        hook = hook_name,
+                        network = network_name,
+                        "Custom contract address overriding existing address"
+                    );
+                }
+                network_config.contracts.insert(hook_name, contract_addr);
+            }
+
+            // Merge token filters
+            for (hook_name, token_filter) in custom_network.token_filters {
+                if network_config.token_filters.contains_key(&hook_name) {
+                    tracing::warn!(
+                        hook = hook_name,
+                        network = network_name,
+                        "Custom token filter overriding existing filter"
+                    );
+                }
+                network_config.token_filters.insert(hook_name, token_filter);
+            }
+
+            // Override network enabled flag if custom config specifies it
+            if let Some(custom_enabled) = custom_network.enabled {
+                if network_config.enabled.is_some() {
+                    tracing::warn!(
+                        network = network_name,
+                        "Custom network enabled flag overriding existing flag"
+                    );
+                }
+                network_config.enabled = Some(custom_enabled);
+            }
+        }
+
+        Ok(())
     }
 
     /// Save hook configuration to TOML file (test utility)
@@ -696,5 +852,59 @@ source = { source_type = "payment", field = "value" }
 
         assert_eq!(name, "trigger");
         assert!(types.is_empty());
+    }
+
+    #[test]
+    fn test_custom_hooks_file_missing() {
+        // Test that missing custom hooks file only warns, doesn't error
+        let toml = r#"
+[hooks]
+enabled = true
+allow_hook_failure = false
+custom_hooks_file = "nonexistent-hooks-custom.toml"
+
+[hooks.definitions.test_hook]
+enabled = true
+function_signature = "test()"
+description = "Test hook"
+"#;
+
+        let temp_path = "/tmp/test_hooks_missing_custom_file.toml";
+        std::fs::write(temp_path, toml).unwrap();
+
+        // Should load successfully despite missing custom file
+        let result = HookConfig::from_file(temp_path);
+        assert!(result.is_ok(), "Should succeed even when custom hooks file is missing");
+
+        let config = result.unwrap();
+        assert!(config.hooks.enabled);
+        assert_eq!(config.hooks.definitions.len(), 1);
+        assert!(config.hooks.definitions.contains_key("test_hook"));
+
+        std::fs::remove_file(temp_path).ok();
+    }
+
+    #[test]
+    fn test_custom_hooks_disabled() {
+        // Test that custom_hooks_file = None works correctly
+        let toml = r#"
+[hooks]
+enabled = true
+
+[hooks.definitions.prod_hook]
+enabled = true
+function_signature = "prod()"
+description = "Production hook"
+"#;
+
+        let temp_path = "/tmp/test_hooks_no_custom.toml";
+        std::fs::write(temp_path, toml).unwrap();
+
+        let config = HookConfig::from_file(temp_path).unwrap();
+        assert!(config.hooks.enabled);
+        assert_eq!(config.hooks.custom_hooks_file, None);
+        assert_eq!(config.hooks.definitions.len(), 1);
+
+        std::fs::remove_file(temp_path).ok();
     }
 }

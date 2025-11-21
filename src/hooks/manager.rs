@@ -336,6 +336,7 @@ mod tests {
             hooks: HookSettings {
                 enabled: true,
                 allow_hook_failure: false,
+                custom_hooks_file: None,
                 definitions: HashMap::new(),
                 networks: HashMap::new(),
                 mappings: HashMap::new(),
@@ -441,6 +442,7 @@ mod tests {
             hooks: HookSettings {
                 enabled: true,
                 allow_hook_failure: false,
+                custom_hooks_file: None,
                 definitions,
                 networks,
                 mappings: HashMap::new(),

@@ -10,3 +10,4 @@ node_modules/
 logs*
 .wrangler/
 tokens-custom.toml
+hooks-custom.toml
