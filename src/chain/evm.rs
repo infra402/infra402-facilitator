@@ -73,6 +73,15 @@ sol!(
     "abi/XBNB.json"
 );
 
+sol!(
+    #[allow(missing_docs)]
+    #[allow(clippy::too_many_arguments)]
+    #[derive(Debug)]
+    #[sol(rpc)]
+    ERC20TokenWith3009,
+    "abi/ERC20TokenWith3009.json"
+);
+
 sol! {
     #[allow(missing_docs)]
     #[allow(clippy::too_many_arguments)]
@@ -93,13 +102,27 @@ tokio::task_local! {
     pub static PRESELECTED_FACILITATOR: Address;
 }
 
-/// Unified enum for ERC-3009 compatible token contracts (USDC and XBNB).
+/// ABI signature variant for ERC-3009 transferWithAuthorization.
 ///
-/// Both USDC and XBNB implement the ERC-3009 `transferWithAuthorization` interface.
-/// This enum allows the code to work with either token type while maintaining type safety.
+/// Different token implementations use different signature parameter formats:
+/// - BytesSignature: signature passed as single bytes parameter (e.g., USDC)
+/// - SplitSignature: signature passed as (v, r, s) components (e.g., XBNB, ERC20TokenWith3009)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbiVariant {
+    /// Signature as bytes: transferWithAuthorization(..., bytes signature)
+    BytesSignature,
+    /// Signature as components: transferWithAuthorization(..., uint8 v, bytes32 r, bytes32 s)
+    SplitSignature,
+}
+
+/// Unified enum for ERC-3009 compatible token contracts (USDC, XBNB, and ERC20TokenWith3009).
+///
+/// All variants implement the ERC-3009 `transferWithAuthorization` interface.
+/// This enum allows the code to work with any token type while maintaining type safety.
 pub enum Erc3009Contract<P> {
     Usdc(USDC::USDCInstance<P>),
     Xbnb(XBNB::XBNBInstance<P>),
+    ERC20TokenWith3009(ERC20TokenWith3009::ERC20TokenWith3009Instance<P>),
 }
 
 /// Combined filler type for gas, blob gas, nonce, and chain ID.
@@ -1579,10 +1602,11 @@ struct Aggregate3Result {
 /// Unified enum for ERC-3009 `transferWithAuthorization` call builders.
 ///
 /// Wraps either a USDC or XBNB call builder for the `transferWithAuthorization` function.
-/// Note: USDC has multiple overloads (_0), while XBNB has only one (no suffix).
+/// Note: USDC has multiple overloads (_0), while XBNB and ERC20TokenWith3009 have only one (no suffix).
 pub enum TransferWithAuthorizationCallBuilder<P> {
     Usdc(SolCallBuilder<P, USDC::transferWithAuthorization_0Call>),
     Xbnb(SolCallBuilder<P, XBNB::transferWithAuthorizationCall>),
+    ERC20TokenWith3009(SolCallBuilder<P, ERC20TokenWith3009::transferWithAuthorizationCall>),
 }
 
 impl<P> TransferWithAuthorizationCallBuilder<P>
@@ -1594,6 +1618,7 @@ where
         match self {
             TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.target(),
             TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.target(),
+            TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx) => tx.target(),
         }
     }
 
@@ -1602,6 +1627,7 @@ where
         match self {
             TransferWithAuthorizationCallBuilder::Usdc(tx) => tx.calldata().clone(),
             TransferWithAuthorizationCallBuilder::Xbnb(tx) => tx.calldata().clone(),
+            TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx) => tx.calldata().clone(),
         }
     }
 }
@@ -1782,6 +1808,33 @@ async fn assert_enough_balance<P: Provider>(
             .await
             .map_err(|e| categorize_transport_error(e, "balance query"))?
         }
+        Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
+            call_with_fallback(
+                erc20_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %erc20_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                erc20_contract
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %erc20_contract.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| categorize_transport_error(e, "balance query"))?
+        }
     };
 
     if balance < max_amount_required {
@@ -1955,6 +2008,30 @@ async fn assert_domain<P: Provider>(
                         .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
                         domain.version // version field from the eip712Domain response
                     }
+                    Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
+                        let domain = call_with_fallback(
+                            erc20_contract
+                                .eip712Domain()
+                                .call()
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                            erc20_contract
+                                .eip712Domain()
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_domain",
+                                    otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                        domain.version // version field from the eip712Domain response
+                    }
                 };
                 // Store in cache for future requests
                 cache.write().await.insert(*asset_address, (fetched_version.clone(), std::time::Instant::now()));
@@ -2011,6 +2088,30 @@ async fn assert_domain<P: Provider>(
                     .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
                     domain.version // version field from the eip712Domain response
                 }
+                Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
+                    let domain = call_with_fallback(
+                        erc20_contract
+                            .eip712Domain()
+                            .call()
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_domain",
+                                otel.kind = "client",
+                            )),
+                        erc20_contract
+                            .eip712Domain()
+                            .call()
+                            .block(BlockId::Number(BlockNumberOrTag::Latest))
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_domain",
+                                otel.kind = "client",
+                            )),
+                    )
+                    .await
+                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 domain"))?;
+                    domain.version // version field from the eip712Domain response
+                }
             }
         }
     };
@@ -2021,6 +2122,39 @@ async fn assert_domain<P: Provider>(
         verifying_contract: *asset_address,
     };
     Ok(domain)
+}
+
+/// Helper function to determine which ERC-3009 contract variant to use based on abi_file.
+///
+/// Maps abi_file paths to the correct contract instance. This function will be used
+/// once TokenManager is integrated into the call chain to enable token-based selection.
+///
+/// # Arguments
+/// * `abi_file` - Path to the ABI file (e.g., "abi/USDC.json", "abi/XBNB.json", "abi/ERC20TokenWith3009.json")
+/// * `asset_address` - The token contract address
+/// * `provider` - The Ethereum provider
+///
+/// # Returns
+/// The appropriate `Erc3009Contract` variant for the given ABI file
+fn determine_contract_from_abi_file<P: Provider + Clone>(
+    abi_file: &str,
+    asset_address: Address,
+    provider: P,
+) -> Result<Erc3009Contract<P>, FacilitatorLocalError> {
+    match abi_file {
+        "abi/USDC.json" | "abi/usdc.json" => {
+            Ok(Erc3009Contract::Usdc(USDC::new(asset_address, provider)))
+        }
+        "abi/XBNB.json" | "abi/xbnb.json" => {
+            Ok(Erc3009Contract::Xbnb(XBNB::new(asset_address, provider)))
+        }
+        "abi/ERC20TokenWith3009.json" | "abi/erc20tokenwith3009.json" => {
+            Ok(Erc3009Contract::ERC20TokenWith3009(ERC20TokenWith3009::new(asset_address, provider)))
+        }
+        _ => Err(FacilitatorLocalError::ContractCall(
+            format!("Unknown ABI file: {}. Supported ABIs: abi/USDC.json, abi/XBNB.json, abi/ERC20TokenWith3009.json", abi_file)
+        )),
+    }
 }
 
 /// Runs all preconditions needed for a successful payment:
@@ -2092,8 +2226,10 @@ async fn assert_valid_payment<P: Provider + Clone>(
             "Invalid Ethereum address format".to_string()
         ))?;
 
-    // Determine token type based on network
-    // BSC networks use XBNB, other networks use USDC
+    // TODO: Integrate TokenManager to determine contract type based on asset_address
+    // The full flow should be: asset_address → TokenManager.get_token_name() →
+    // TokenManager.get_abi_file() → determine_contract_from_abi_file()
+    // For now, use network-based fallback until TokenManager is wired into the call chain
     let contract = match chain.network {
         Network::BscTestnet | Network::Bsc => {
             Erc3009Contract::Xbnb(XBNB::new(asset_address, provider.clone()))
@@ -2191,6 +2327,32 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
                 s,
             );
             (TransferWithAuthorizationCallBuilder::Xbnb(tx), *xbnb_contract.address())
+        }
+        Erc3009Contract::ERC20TokenWith3009(erc20_contract) => {
+            // ERC20TokenWith3009 uses separate v, r, s parameters like XBNB
+            // Signature format: 65 bytes (r: 32 bytes, s: 32 bytes, v: 1 byte)
+            if signature.len() != 65 {
+                return Err(FacilitatorLocalError::InvalidSignature(
+                    payment.from.into(),
+                    format!("Invalid signature length: expected 65, got {}", signature.len()),
+                ));
+            }
+            let v = signature[64];
+            let r = FixedBytes::<32>::from_slice(&signature[0..32]);
+            let s = FixedBytes::<32>::from_slice(&signature[32..64]);
+
+            let tx = erc20_contract.transferWithAuthorization(
+                from,
+                to,
+                value,
+                valid_after,
+                valid_before,
+                nonce,
+                v,
+                r,
+                s,
+            );
+            (TransferWithAuthorizationCallBuilder::ERC20TokenWith3009(tx), *erc20_contract.address())
         }
     };
 
