@@ -193,6 +193,10 @@ pub struct ChainConfig {
     pub receipt_timeout_blocks: u64,
     /// Timeout for individual RPC requests in seconds.
     pub rpc_request_timeout_seconds: u64,
+    /// Gas buffer multiplier override for this chain.
+    /// If not set, uses the global transaction.gas_buffer.
+    #[serde(default)]
+    pub gas_buffer: Option<f64>,
 }
 
 impl ChainConfig {
@@ -234,6 +238,15 @@ pub struct TransactionConfig {
     /// If a chain is not configured, sensible defaults will be used (120s receipt timeout, 30s RPC timeout).
     #[serde(default)]
     pub chains: HashMap<String, ChainConfig>,
+
+    /// Gas buffer multiplier applied to estimated gas (e.g., 1.2 = 20% buffer).
+    /// Default: 1.0 (no buffer, for backwards compatibility)
+    #[serde(default = "default_gas_buffer")]
+    pub gas_buffer: f64,
+}
+
+fn default_gas_buffer() -> f64 {
+    1.0
 }
 
 impl Default for TransactionConfig {
@@ -244,7 +257,19 @@ impl Default for TransactionConfig {
             pool_max_idle_per_host: 100, // 100 connections
             pool_idle_timeout_seconds: 90, // 90 seconds
             chains: HashMap::new(),
+            gas_buffer: default_gas_buffer(),
         }
+    }
+}
+
+impl TransactionConfig {
+    /// Get the effective gas buffer for a specific network.
+    /// Returns the chain-specific override if set, otherwise the global default.
+    pub fn gas_buffer_for_network(&self, network: &str) -> f64 {
+        self.chains
+            .get(network)
+            .and_then(|c| c.gas_buffer)
+            .unwrap_or(self.gas_buffer)
     }
 }
 

@@ -573,6 +573,32 @@ impl MetaEvmProvider for EvmProvider {
             "Using receipt timeout for transaction"
         );
 
+        // Apply gas buffer if configured
+        let gas_buffer = config
+            .as_ref()
+            .map(|c| c.transaction.gas_buffer_for_network(&network_str))
+            .unwrap_or(1.0);
+
+        if gas_buffer > 1.0 {
+            let estimated_gas = self
+                .inner
+                .estimate_gas(txr.clone())
+                .await
+                .map_err(|e| {
+                    FacilitatorLocalError::ContractCall(format!("Gas estimation failed: {e:?}"))
+                })?;
+
+            let buffered_gas = (estimated_gas as f64 * gas_buffer) as u64;
+            tracing::debug!(
+                estimated_gas,
+                gas_buffer,
+                buffered_gas,
+                network = %network_str,
+                "Applied gas buffer to transaction"
+            );
+            txr = txr.with_gas_limit(buffered_gas);
+        }
+
         // Send transaction with error handling for nonce reset
         let pending_tx = match self.inner.send_transaction(txr).await {
             Ok(pending) => pending,

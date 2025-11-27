@@ -118,6 +118,11 @@ connection_timeout_seconds = 10      # Connection establishment timeout
 pool_max_idle_per_host = 100         # Max idle connections per RPC host
 pool_idle_timeout_seconds = 90       # Keep-alive timeout for idle connections
 
+# Gas buffer multiplier applied to estimated gas (e.g., 1.2 = 20% buffer)
+# Helps prevent out-of-gas errors when RPC estimation is too tight
+# Default: 1.0 (no buffer)
+gas_buffer = 1.0
+
 # Chain-specific configurations
 # Format: [transaction.chains.<network-name>]
 # Network name should match the chain ID mapping in src/chain/evm.rs
@@ -133,6 +138,7 @@ rpc_request_timeout_seconds = 15  # BSC RPCs can be slow/flaky
 block_time_seconds = 3
 receipt_timeout_blocks = 20  # 60 seconds total
 rpc_request_timeout_seconds = 15
+gas_buffer = 1.2  # 20% buffer for Infura estimation issues
 
 # Base - Chain ID 8453
 [transaction.chains.base]
