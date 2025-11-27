@@ -12,7 +12,7 @@ enabled = true
 # Allow hook calls to fail without reverting the entire batch
 # When true: Individual hook calls can fail without reverting transfers
 # When false: Any hook failure reverts the entire batch (safer default)
-allow_hook_failure = false
+allow_hook_failure = true
 
 # Optional: Path to custom hooks file (disabled by default)
 # Uncomment to enable custom hooks (see hooks-custom.toml.example)
@@ -41,3 +41,77 @@ custom_hooks_file = "hooks-custom.toml"
 # Production hooks that are shared across all networks go here
 #
 # For custom/test hooks, use hooks-custom.toml (see hooks-custom.toml.example)
+
+# UpDown402 betting callback hook for BSC Testnet
+[hooks.definitions.up_down_402]
+enabled = true
+description = "UpDown402 betting callback with EIP-3009 payment"
+function_signature = "onBetPlaced(address,address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)"
+
+# Parameter 1: paymentToken (EIP-3009 token contract address)
+[[hooks.definitions.up_down_402.parameters]]
+type = "address"
+source = { source_type = "payment", field = "contractaddress" }
+
+# Parameter 2: from (payer address)
+[[hooks.definitions.up_down_402.parameters]]
+type = "address"
+source = { source_type = "payment", field = "from" }
+
+# Parameter 3: value (bet amount)
+[[hooks.definitions.up_down_402.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "value" }
+
+# Parameter 4: validAfter (EIP-3009 timestamp)
+[[hooks.definitions.up_down_402.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validafter" }
+
+# Parameter 5: validBefore (EIP-3009 timestamp)
+[[hooks.definitions.up_down_402.parameters]]
+type = "uint256"
+source = { source_type = "payment", field = "validbefore" }
+
+# Parameter 6: nonce (EIP-3009 unique nonce)
+[[hooks.definitions.up_down_402.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "nonce" }
+
+# Parameter 7: v (signature component)
+[[hooks.definitions.up_down_402.parameters]]
+type = "uint8"
+source = { source_type = "payment", field = "signaturev" }
+
+# Parameter 8: r (signature component)
+[[hooks.definitions.up_down_402.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signaturer" }
+
+# Parameter 9: s (signature component)
+[[hooks.definitions.up_down_402.parameters]]
+type = "bytes32"
+source = { source_type = "payment", field = "signatures" }
+
+# ============================================================================
+# Custom Network Configurations
+# ============================================================================
+# Configure custom hooks for specific networks and recipients.
+
+# BSC Testnet configuration for UpDown402
+[hooks.networks.bsc-testnet]
+enabled = true
+
+# Recipient address → hook names mapping for this network
+# Set UP_DOWN_402_RECIPIENT_BSC_TESTNET in your .env file
+[hooks.networks.bsc-testnet.mappings]
+"${UP_DOWN_402_RECIPIENT_BSC_TESTNET}" = ["up_down_402"]
+
+# Hook name → contract address mapping for this network
+# Set UP_DOWN_402_CONTRACT_BSC_TESTNET in your .env file
+[hooks.networks.bsc-testnet.contracts]
+up_down_402 = "${HOOK_UP_DOWN_402_CALLBACK_BSC_TESTNET_CONTRACT}"
+
+# Token filters: Only trigger for XBNB payments on BSC testnet
+[hooks.networks.bsc-testnet.token_filters]
+up_down_402 = ["xbnb"]
