@@ -3063,7 +3063,7 @@ mod tests {
 
     use crate::hooks::HookCall;
     use crate::network::Network;
-    use crate::types::{MixedAddress, SettleResponse, TransactionHash};
+    use crate::types::MixedAddress;
     use alloy::primitives::{Bytes, FixedBytes, U256};
 
     /// Helper function to create a mock ValidatedSettlement for testing
@@ -3107,22 +3107,6 @@ mod tests {
             calldata,
             gas_limit,
             allow_failure,
-        }
-    }
-
-    /// Helper function to create a mock SettleResponse
-    fn mock_settle_response(
-        success: bool,
-        payer: Address,
-        network: Network,
-        tx_hash: Option<[u8; 32]>,
-    ) -> SettleResponse {
-        SettleResponse {
-            success,
-            error_reason: None,
-            payer: MixedAddress::from(payer),
-            transaction: tx_hash.map(TransactionHash::Evm),
-            network,
         }
     }
 
@@ -3640,8 +3624,6 @@ mod tests {
     // ========================================================================
     // Additional Integration Tests (Infrastructure Components)
     // ========================================================================
-
-    use alloy::signers::local::PrivateKeySigner;
 
     /// Simulate partial failure logic - returns whether batch should succeed
     fn check_partial_failure_logic(

@@ -200,14 +200,15 @@ impl HookManager {
                     );
                 }
 
-                // Resolve contract address for this network
-                let contract_address = match state.resolve_contract_address(name, network) {
+                // Resolve contract address for this network and destination
+                let contract_address = match state.resolve_contract_address(name, network, &destination) {
                     Some(addr) => addr,
                     None => {
                         tracing::warn!(
                             hook = name,
                             network = network,
-                            "Hook contract address not configured for network, skipping"
+                            destination = %destination,
+                            "Hook contract address not configured for network/destination, skipping"
                         );
                         continue;
                     }
@@ -422,10 +423,12 @@ mod tests {
         );
 
         let mut network_contracts = HashMap::new();
-        network_contracts.insert(
-            "test_hook".to_string(),
-            "0x1234567890123456789012345678901234567890".to_string(),
+        let mut test_hook_contracts = HashMap::new();
+        test_hook_contracts.insert(
+            "0x3333333333333333333333333333333333333333".to_string(),  // destination
+            "0x1234567890123456789012345678901234567890".to_string(),  // contract
         );
+        network_contracts.insert("test_hook".to_string(), test_hook_contracts);
 
         let mut networks = HashMap::new();
         networks.insert(

@@ -107,10 +107,11 @@ enabled = true
 [hooks.networks.bsc-testnet.mappings]
 "0x5B7f8Ab0180fb96d05c46619caB4eb4e38B2f2b0" = ["up_down_402"]
 
-# Hook name → contract address mapping for this network
-# Set UP_DOWN_402_CONTRACT_BSC_TESTNET in your .env file
-[hooks.networks.bsc-testnet.contracts]
-up_down_402 = "0x5B7f8Ab0180fb96d05c46619caB4eb4e38B2f2b0"
+# Hook name → (destination → contract address) mapping for this network
+# Format: [hooks.networks.<network>.contracts.<hook_name>]
+# "<destination_address>" = "<contract_address>"
+[hooks.networks.bsc-testnet.contracts.up_down_402]
+"0x5B7f8Ab0180fb96d05c46619caB4eb4e38B2f2b0" = "0x5B7f8Ab0180fb96d05c46619caB4eb4e38B2f2b0"
 
 # Token filters: Only trigger for XBNB payments on BSC testnet
 [hooks.networks.bsc-testnet.token_filters]

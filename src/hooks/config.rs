@@ -483,10 +483,10 @@ pub struct NetworkHookConfig {
     #[serde(default)]
     pub mappings: HashMap<String, Vec<String>>,
 
-    /// Hook name → contract address mapping for this network
+    /// Hook name → (destination → contract address) mapping for this network
     /// Supports environment variable substitution: "${ENV_VAR_NAME}"
     #[serde(default)]
-    pub contracts: HashMap<String, String>,
+    pub contracts: HashMap<String, HashMap<String, String>>,
 
     /// Token filters: Restrict hooks to specific payment tokens
     /// Maps hook_name → token filter (wildcard "*" or list of token names)
@@ -584,19 +584,31 @@ impl HookSettings {
             .unwrap_or(self.enabled)
     }
 
-    /// Resolve contract address for a hook on a specific network
+    /// Resolve contract address for a hook on a specific network and destination
     ///
     /// Supports environment variable substitution: "${ENV_VAR_NAME}"
-    /// Returns None if hook not configured for this network.
-    pub fn resolve_contract_address(&self, hook_name: &str, network_name: &str) -> Option<Address> {
+    /// Returns None if hook not configured for this network/destination.
+    pub fn resolve_contract_address(
+        &self,
+        hook_name: &str,
+        network_name: &str,
+        destination: &Address,
+    ) -> Option<Address> {
         let network_config = self.networks.get(network_name)?;
-        let address_str = network_config.contracts.get(hook_name)?;
+        let dest_map = network_config.contracts.get(hook_name)?;
 
-        // Substitute environment variable if present
-        let resolved = Self::substitute_env_var(address_str);
+        // Case-insensitive lookup for destination address
+        let dest_str = format!("{:?}", destination);
+        let dest_lower = dest_str.to_lowercase();
 
-        // Parse address
-        Address::from_str(&resolved).ok()
+        for (key, addr) in dest_map {
+            if key.to_lowercase() == dest_lower {
+                let resolved = Self::substitute_env_var(addr);
+                return Address::from_str(&resolved).ok();
+            }
+        }
+
+        None
     }
 
     /// Resolve a mapping address string to Address
@@ -747,16 +759,20 @@ impl HookConfig {
                 network_config.mappings.insert(dest_addr, hook_names);
             }
 
-            // Merge contract addresses
-            for (hook_name, contract_addr) in custom_network.contracts {
-                if network_config.contracts.contains_key(&hook_name) {
-                    tracing::warn!(
-                        hook = hook_name,
-                        network = network_name,
-                        "Custom contract address overriding existing address"
-                    );
+            // Merge contract addresses (destination-scoped)
+            for (hook_name, dest_contracts) in custom_network.contracts {
+                let hook_contracts = network_config.contracts.entry(hook_name.clone()).or_default();
+                for (dest_addr, contract_addr) in dest_contracts {
+                    if hook_contracts.contains_key(&dest_addr) {
+                        tracing::warn!(
+                            hook = hook_name,
+                            destination = dest_addr,
+                            network = network_name,
+                            "Custom contract address overriding existing address"
+                        );
+                    }
+                    hook_contracts.insert(dest_addr, contract_addr);
                 }
-                network_config.contracts.insert(hook_name, contract_addr);
             }
 
             // Merge token filters
