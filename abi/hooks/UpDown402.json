@@ -55,6 +55,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_PRICE_TOLERANCE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "PYTH",
     "inputs": [],
     "outputs": [
@@ -141,6 +154,11 @@
       },
       {
         "name": "paid",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "voided",
         "type": "bool",
         "internalType": "bool"
       },
@@ -318,6 +336,11 @@
             "name": "paid",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "voided",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -373,6 +396,16 @@
             "name": "priceTolerance",
             "type": "uint32",
             "internalType": "uint32"
+          },
+          {
+            "name": "expectedExponent",
+            "type": "int8",
+            "internalType": "int8"
+          },
+          {
+            "name": "index",
+            "type": "uint8",
+            "internalType": "uint8"
           },
           {
             "name": "enabled",
@@ -513,6 +546,11 @@
             "name": "paid",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "voided",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -537,6 +575,72 @@
         "name": "maxPayouts",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "info",
+        "type": "tuple",
+        "internalType": "struct UpDown402.PayoutInfo",
+        "components": [
+          {
+            "name": "count",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalUnpaidAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "contractBalance",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "paymentToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "betToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "totalPayoutAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalReserveAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalWinning",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalLosing",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPayoutInfo",
+    "inputs": [
+      {
+        "name": "betToken",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -650,6 +754,11 @@
         "name": "totalReserveAmount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "totalPaidAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -716,6 +825,47 @@
     "name": "getSettlementInfo",
     "inputs": [
       {
+        "name": "betToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "info",
+        "type": "tuple",
+        "internalType": "struct UpDown402.SettlementInfo",
+        "components": [
+          {
+            "name": "betToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "priceId",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "count",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "timestamps",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSettlementInfo",
+    "inputs": [
+      {
         "name": "roundId",
         "type": "uint256",
         "internalType": "uint256"
@@ -756,339 +906,6 @@
             "name": "timestamps",
             "type": "uint256[]",
             "internalType": "uint256[]"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getUserBetsInRange",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "startBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "endBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "results",
-        "type": "tuple[]",
-        "internalType": "struct UpDown402.BetData[]",
-        "components": [
-          {
-            "name": "betId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "user",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "paymentToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "betToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "isUp",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "entryPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "exitPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "betTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maturityTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "roundId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "settled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "isWinner",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "paid",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getUserUnpaidBets",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "startBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "endBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "results",
-        "type": "tuple[]",
-        "internalType": "struct UpDown402.BetData[]",
-        "components": [
-          {
-            "name": "betId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "user",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "paymentToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "betToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "isUp",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "entryPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "exitPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "betTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maturityTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "roundId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "settled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "isWinner",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "paid",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getUserUnsettledBets",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "paymentToken",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "roundId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "startBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "endBetId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "results",
-        "type": "tuple[]",
-        "internalType": "struct UpDown402.BetData[]",
-        "components": [
-          {
-            "name": "betId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "user",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "paymentToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "betToken",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "isUp",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "entryPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "exitPrice",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "betTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maturityTime",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "roundId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "settled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "isWinner",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
-            "name": "paid",
-            "type": "bool",
-            "internalType": "bool"
           }
         ]
       }
@@ -1222,6 +1039,54 @@
   },
   {
     "type": "function",
+    "name": "refundVoidedBets",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refundVoidedBets",
+    "inputs": [
+      {
+        "name": "roundId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "betToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxRefunds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "refundVoidedBets",
+    "inputs": [
+      {
+        "name": "betToken",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxRefunds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "renounceRole",
     "inputs": [
       {
@@ -1311,6 +1176,11 @@
         "name": "paymentToken",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "minBetAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1475,6 +1345,16 @@
             "internalType": "uint32"
           },
           {
+            "name": "expectedExponent",
+            "type": "int8",
+            "internalType": "int8"
+          },
+          {
+            "name": "index",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "enabled",
             "type": "bool",
             "internalType": "bool"
@@ -1503,6 +1383,11 @@
       },
       {
         "name": "payoutAllocation",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minBetAmount",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1665,6 +1550,31 @@
   },
   {
     "type": "event",
+    "name": "BetRefunded",
+    "inputs": [
+      {
+        "name": "betId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BetSettled",
     "inputs": [
       {
@@ -1684,6 +1594,12 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "entryPrice",
+        "type": "int256",
+        "indexed": false,
+        "internalType": "int256"
       },
       {
         "name": "exitPrice",
@@ -1734,6 +1650,31 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BetVoided",
+    "inputs": [
+      {
+        "name": "betId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
       }
     ],
     "anonymous": false
@@ -1965,6 +1906,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "minBetAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -2029,6 +1976,22 @@
   },
   {
     "type": "error",
+    "name": "BetAmountTooLow",
+    "inputs": [
+      {
+        "name": "provided",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minimum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BetMaturesAfterRoundEnd",
     "inputs": []
   },
@@ -2072,6 +2035,17 @@
   },
   {
     "type": "error",
+    "name": "DuplicateBetToken",
+    "inputs": [
+      {
+        "name": "betToken",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ECDSAInvalidSignature",
     "inputs": []
   },
@@ -2099,8 +2073,45 @@
   },
   {
     "type": "error",
-    "name": "ETHTransferFailed",
+    "name": "EIP3009TransferFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EndTimeBeforeStartTime",
+    "inputs": [
+      {
+        "name": "endTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "startTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FailedCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientBalance",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2130,8 +2141,19 @@
   },
   {
     "type": "error",
-    "name": "InvalidBetDirection",
-    "inputs": []
+    "name": "IntervalTooLong",
+    "inputs": [
+      {
+        "name": "interval",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "roundDuration",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -2173,40 +2195,24 @@
   },
   {
     "type": "error",
+    "name": "LockPeriodTooLong",
+    "inputs": [
+      {
+        "name": "lockPeriod",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "roundDuration",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NoActiveRound",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoPriceForBet",
-    "inputs": [
-      {
-        "name": "betId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maturityTime",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NoPriceForBetEntry",
-    "inputs": [
-      {
-        "name": "betId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "betTime",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -2253,14 +2259,24 @@
   },
   {
     "type": "error",
-    "name": "PriceStale",
+    "name": "PriceToleranceTooHigh",
     "inputs": [
       {
-        "name": "age",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "provided",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "max",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2275,6 +2291,11 @@
   {
     "type": "error",
     "name": "RoundLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RoundNotEnded",
     "inputs": []
   },
   {
@@ -2327,12 +2348,17 @@
   },
   {
     "type": "error",
-    "name": "TokenNotAccepted",
+    "name": "StartTimeInPast",
     "inputs": [
       {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
+        "name": "startTime",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentTime",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
