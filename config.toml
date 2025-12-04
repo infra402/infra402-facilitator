@@ -132,13 +132,14 @@ gas_buffer = 1.0
 block_time_seconds = 3
 receipt_timeout_blocks = 20  # 60 seconds total (20 blocks * 3s)
 rpc_request_timeout_seconds = 15  # BSC RPCs can be slow/flaky
+gas_buffer = 1.1  # More buffer for inaccurate multicall3 estimations
 
 # BSC Testnet - Chain ID 97
 [transaction.chains.bsc-testnet]
 block_time_seconds = 3
 receipt_timeout_blocks = 20  # 60 seconds total
 rpc_request_timeout_seconds = 15
-gas_buffer = 1.2  # 20% buffer for Infura estimation issues
+gas_buffer = 1.1  # More buffer for inaccurate multicall3 estimations
 
 # Base - Chain ID 8453
 [transaction.chains.base]
