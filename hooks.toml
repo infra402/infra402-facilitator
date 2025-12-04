@@ -99,20 +99,35 @@ source = { source_type = "payment", field = "signatures" }
 # Configure custom hooks for specific networks and recipients.
 
 # BSC Testnet configuration for UpDown402
+[hooks.networks.bsc]
+enabled = true
+
+# Recipient address → hook names mapping for this network
+[hooks.networks.bsc.mappings]
+"0x3949CA149979a0Fe89aC99Dad410855e13bc3c50" = ["up_down_402"]
+
+# Hook name → (destination → contract address) mapping for this network
+# Format: [hooks.networks.<network>.contracts.<hook_name>]
+# "<destination_address>" = "<contract_address>"
+[hooks.networks.bsc.contracts.up_down_402]
+"0x3949CA149979a0Fe89aC99Dad410855e13bc3c50" = "0x3949CA149979a0Fe89aC99Dad410855e13bc3c50"
+
+# Token filters: Only trigger for XBNB payments on BSC mainnet
+[hooks.networks.bsc.token_filters]
+up_down_402 = ["xbnb"]
+
+# BSC Testnet configuration for UpDown402
 [hooks.networks.bsc-testnet]
 enabled = true
 
 # Recipient address → hook names mapping for this network
-# Set UP_DOWN_402_RECIPIENT_BSC_TESTNET in your .env file
 [hooks.networks.bsc-testnet.mappings]
-"0xc2e0f9468d9553b9220C4d1D1798989eB807708d" = ["up_down_402"]
 "0x5157d93579812b749e5547a0bF60B26b5Ac8f104" = ["up_down_402"]
 
 # Hook name → (destination → contract address) mapping for this network
 # Format: [hooks.networks.<network>.contracts.<hook_name>]
 # "<destination_address>" = "<contract_address>"
 [hooks.networks.bsc-testnet.contracts.up_down_402]
-"0xc2e0f9468d9553b9220C4d1D1798989eB807708d" = "0xc2e0f9468d9553b9220C4d1D1798989eB807708d"
 "0x5157d93579812b749e5547a0bF60B26b5Ac8f104" = "0x5157d93579812b749e5547a0bF60B26b5Ac8f104"
 
 # Token filters: Only trigger for XBNB payments on BSC testnet
