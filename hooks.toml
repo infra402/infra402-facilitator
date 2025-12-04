@@ -104,13 +104,13 @@ enabled = true
 
 # Recipient address → hook names mapping for this network
 [hooks.networks.bsc.mappings]
-"0x3949CA149979a0Fe89aC99Dad410855e13bc3c50" = ["up_down_402"]
+"0x8778A819b0cD2Cf2B89B05c988615162804cbB3f" = ["up_down_402"]
 
 # Hook name → (destination → contract address) mapping for this network
 # Format: [hooks.networks.<network>.contracts.<hook_name>]
 # "<destination_address>" = "<contract_address>"
 [hooks.networks.bsc.contracts.up_down_402]
-"0x3949CA149979a0Fe89aC99Dad410855e13bc3c50" = "0x3949CA149979a0Fe89aC99Dad410855e13bc3c50"
+"0x8778A819b0cD2Cf2B89B05c988615162804cbB3f" = "0x8778A819b0cD2Cf2B89B05c988615162804cbB3f"
 
 # Token filters: Only trigger for XBNB payments on BSC mainnet
 [hooks.networks.bsc.token_filters]
