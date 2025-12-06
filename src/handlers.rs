@@ -27,48 +27,12 @@ use crate::types::{
     VerifyResponse,
 };
 
-/// `GET /verify`: Returns a machine-readable description of the `/verify` endpoint.
-///
-/// This is served by the facilitator to help clients understand how to construct
-/// a valid [`VerifyRequest`] for payment verification.
-///
-/// This is optional metadata and primarily useful for discoverability and debugging tools.
-#[instrument(skip_all)]
-pub async fn get_verify_info() -> impl IntoResponse {
-    Json(json!({
-        "endpoint": "/verify",
-        "description": "POST to verify x402 payments",
-        "body": {
-            "paymentPayload": "PaymentPayload",
-            "paymentRequirements": "PaymentRequirements",
-        }
-    }))
-}
-
-/// `GET /settle`: Returns a machine-readable description of the `/settle` endpoint.
-///
-/// This is served by the facilitator to describe the structure of a valid
-/// [`SettleRequest`] used to initiate on-chain payment settlement.
-#[instrument(skip_all)]
-pub async fn get_settle_info() -> impl IntoResponse {
-    Json(json!({
-        "endpoint": "/settle",
-        "description": "POST to settle x402 payments",
-        "body": {
-            "paymentPayload": "PaymentPayload",
-            "paymentRequirements": "PaymentRequirements",
-        }
-    }))
-}
-
 pub fn routes() -> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>
 {
     type FacilitatorType = crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>;
     Router::new()
         .route("/", get(get_root))
-        .route("/verify", get(get_verify_info))
         .route("/verify", post(post_verify::<FacilitatorType>))
-        .route("/settle", get(get_settle_info))
         .route("/settle", post(post_settle))
         .route("/supported", get(get_supported::<FacilitatorType>))
         .route("/health", get(get_health::<FacilitatorType>))
@@ -90,6 +54,16 @@ pub async fn get_root() -> impl IntoResponse {
 <head>
     <meta charset="utf-8">
     <title>Multi-chain x402 Facilitator by Infra402</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }}
+        details {{ margin: 10px 0; }}
+        summary {{ cursor: pointer; padding: 8px; background: #f5f5f5; border-radius: 4px; }}
+        summary:hover {{ background: #e8e8e8; }}
+        summary strong {{ font-family: monospace; }}
+        pre {{ background: #f8f8f8; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 13px; line-height: 1.4; }}
+        .method-get {{ color: #22863a; }}
+        .method-post {{ color: #6f42c1; }}
+    </style>
 </head>
 <body>
     <h1>Multi-chain x402 Facilitator by Infra402</h1>
@@ -97,31 +71,112 @@ pub async fn get_root() -> impl IntoResponse {
     <p>{pkg_description}</p>
 
     <h2>Available Endpoints</h2>
-    <ul>
-        <li>
-            <a href="/">/</a> (GET) - API root with endpoint information
-        </li>
-        <li>
-            <a href="/health">/health</a> (GET) - Health check endpoint - returns supported networks and payment schemes
-        </li>
-        <li>
-            <a href="/supported">/supported</a> (GET) - Lists all supported payment schemes and blockchain networks
-        </li>
-        <li>
-            <a href="/verify">/verify</a> (GET) - Returns endpoint information for POST /verify
-        </li>
-        <li>
-            /verify (POST) - Verify payment payload signatures and requirements (currently no API key required, rate limits applied)
-        </li>
-        <li>
-            <a href="/settle">/settle</a> (GET) - Returns endpoint information for POST /settle
-        </li>
-        <li>
-            /settle (POST) - Submit verified payment to blockchain for on-chain settlement (currently no API key required, rate limits applied)
-        </li>
-    </ul>
 
-    <p>Documentation: <a href="https://github.com/infra402/infra402-facilitator">https://github.com/infra402/infra402-facilitator</a></p>
+    <details>
+        <summary><strong class="method-get">GET</strong> <strong>/</strong> — API root</summary>
+        <pre>Response: This HTML page with endpoint documentation</pre>
+    </details>
+
+    <details>
+        <summary><strong class="method-get">GET</strong> <strong><a href="/health">/health</a></strong> — Health check</summary>
+        <pre>Response:
+{{
+  "kinds": [
+    {{ "version": "1.0", "scheme": "exact", "network": "base-sepolia" }},
+    {{ "version": "1.0", "scheme": "exact", "network": "base" }},
+    ...
+  ]
+}}</pre>
+    </details>
+
+    <details>
+        <summary><strong class="method-get">GET</strong> <strong><a href="/supported">/supported</a></strong> — Supported networks/schemes</summary>
+        <pre>Response: Same format as /health</pre>
+    </details>
+
+    <details>
+        <summary><strong class="method-post">POST</strong> <strong>/verify</strong> — Verify payment signatures</summary>
+        <pre>Request Body:
+{{
+  "x402Version": 1,
+  "paymentPayload": {{
+    "x402Version": 1,
+    "scheme": "exact",
+    "network": "&lt;network&gt;",
+    "payload": {{
+      "signature": "0x...",           // 65-byte hex signature
+      "authorization": {{
+        "from": "0x...",              // payer address
+        "to": "0x...",                // recipient address
+        "value": "1000000",           // amount in token units
+        "validAfter": "0",            // unix timestamp
+        "validBefore": "1735689600",  // unix timestamp
+        "nonce": "0x..."              // 32-byte hex nonce
+      }}
+    }}
+  }},
+  "paymentRequirements": {{
+    "scheme": "exact",
+    "network": "&lt;network&gt;",
+    "maxAmountRequired": "1000000",
+    "resource": "https://example.com/api",
+    "description": "API access",
+    "mimeType": "application/json",
+    "payTo": "0x...",
+    "maxTimeoutSeconds": 300,
+    "asset": "0x..."                  // token contract address
+  }}
+}}
+
+Supported networks:
+  EVM: base-sepolia, base, xdc, avalanche-fuji, avalanche,
+       polygon-amoy, polygon, sei, sei-testnet, bsc, bsc-testnet
+  Solana: solana, solana-devnet
+
+Response (success):
+{{ "valid": true, "payer": "0x..." }}
+
+Response (failure):
+{{ "valid": false, "payer": "0x...", "reason": {{ "type": "InvalidSignature", "message": "..." }} }}</pre>
+    </details>
+
+    <details>
+        <summary><strong class="method-post">POST</strong> <strong>/settle</strong> — Submit payment to blockchain</summary>
+        <pre>Request Body: Same as POST /verify
+
+Response (success):
+{{
+  "success": true,
+  "payer": "0x...",
+  "transaction": "0xabc123...",       // transaction hash
+  "network": "base-sepolia"
+}}
+
+Response (failure):
+{{
+  "success": false,
+  "payer": "0x...",
+  "errorReason": {{ "type": "InsufficientFunds", "message": "..." }},
+  "transaction": null,
+  "network": "base-sepolia"
+}}</pre>
+    </details>
+
+    <details>
+        <summary><strong class="method-get">GET</strong> <strong>/admin/stats</strong> — Admin statistics (requires X-Admin-Key header)</summary>
+        <pre>Response:
+{{
+  "abuse_detection": {{
+    "total_ips_tracked": 42,
+    "suspicious_ips": 3
+  }},
+  "batch_settlement": {{
+    "active_queues": 5
+  }}
+}}</pre>
+    </details>
+
+    <p style="margin-top: 30px;">Documentation: <a href="https://github.com/infra402/infra402-facilitator">https://github.com/infra402/infra402-facilitator</a></p>
 </body>
 </html>"#);
 

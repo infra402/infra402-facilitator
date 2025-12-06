@@ -86,27 +86,6 @@ curl http://localhost:8080/supported
 
 ## Payment Endpoints
 
-### GET /verify
-
-**Description**: Returns metadata about the `/verify` endpoint structure.
-
-**Response**:
-```json
-{
-  "endpoint": "/verify",
-  "description": "POST to verify x402 payments",
-  "body": {
-    "paymentPayload": "PaymentPayload",
-    "paymentRequirements": "PaymentRequirements"
-  }
-}
-```
-
-**Example**:
-```bash
-curl http://localhost:8080/verify
-```
-
 ### POST /verify
 
 **Description**: Verify a payment payload's cryptographic signature and validate against payment requirements.
@@ -174,27 +153,6 @@ curl -X POST http://localhost:8080/verify \
     "paymentPayload": {...},
     "paymentRequirements": {...}
   }'
-```
-
-### GET /settle
-
-**Description**: Returns metadata about the `/settle` endpoint structure.
-
-**Response**:
-```json
-{
-  "endpoint": "/settle",
-  "description": "POST to settle x402 payments",
-  "body": {
-    "paymentPayload": "PaymentPayload",
-    "paymentRequirements": "PaymentRequirements"
-  }
-}
-```
-
-**Example**:
-```bash
-curl http://localhost:8080/settle
 ```
 
 ### POST /settle
