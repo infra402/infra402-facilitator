@@ -2925,7 +2925,10 @@ fn extract_multicall_revert(err_str: &str) -> Option<String> {
         if hex_data.len() >= 10 {
             // At least selector + some data
             if let Some(decoded) = decode_revert_reason(hex_data) {
-                return Some(decoded);
+                // Skip Multicall3 wrapper messages (same filter as patterns 2 & 3)
+                if !decoded.contains("Multicall3") {
+                    return Some(decoded);
+                }
             }
         }
     }
@@ -2936,8 +2939,8 @@ fn extract_multicall_revert(err_str: &str) -> Option<String> {
         if let Some(end) = err_str[start..].find('"') {
             let hex_data = &err_str[start..start + end];
             if let Some(decoded) = decode_revert_reason(hex_data) {
-                // Skip if it's just the Multicall3 wrapper message
-                if decoded != "Multicall3: call failed" {
+                // Skip Multicall3 wrapper messages (use contains for robustness)
+                if !decoded.contains("Multicall3") {
                     return Some(decoded);
                 }
             }
@@ -2950,8 +2953,8 @@ fn extract_multicall_revert(err_str: &str) -> Option<String> {
         if let Some(end) = err_str[start..].find(r#"\""#) {
             let hex_data = &err_str[start..start + end];
             if let Some(decoded) = decode_revert_reason(hex_data) {
-                // Skip if it's just the Multicall3 wrapper message
-                if decoded != "Multicall3: call failed" {
+                // Skip Multicall3 wrapper messages (use contains for robustness)
+                if !decoded.contains("Multicall3") {
                     return Some(decoded);
                 }
             }
@@ -3334,6 +3337,37 @@ mod tests {
         match result {
             FacilitatorLocalError::ContractCall(msg) => {
                 assert_eq!(msg, "Invalid signature order");
+            }
+            _ => panic!("Expected ContractCall error"),
+        }
+    }
+
+    #[test]
+    fn test_categorize_multicall3_only_falls_through() {
+        // When we only decode "Multicall3: call failed" with no nested error,
+        // it should be filtered out and fall through to generic error
+        // This is the ABI-encoded Error("Multicall3: call failed")
+        let err = r#"data: Some(RawValue("0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000184d756c746963616c6c333a2063616c6c206661696c65640000000000000000"))"#;
+        let result = categorize_transport_error(err, "verify");
+        match result {
+            FacilitatorLocalError::ContractCall(msg) => {
+                // Should NOT contain "Multicall3", should be generic
+                assert_eq!(msg, "Contract call failed");
+            }
+            _ => panic!("Expected ContractCall error"),
+        }
+    }
+
+    #[test]
+    fn test_categorize_multicall3_message_pattern_without_inner_error() {
+        // Real RPC error format: hex is in message field after "Multicall3: call failed: "
+        // but that hex also just decodes to "Multicall3: call failed" (inner error lost by contract)
+        let err = r#"message: "execution reverted: Multicall3: call failed: 0x08c379a0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000174d756c746963616c6c333a2063616c6c206661696c6564000000000000000000""#;
+        let result = categorize_transport_error(err, "verify");
+        match result {
+            FacilitatorLocalError::ContractCall(msg) => {
+                // Should be generic, NOT "Multicall3: call failed"
+                assert_eq!(msg, "Contract call failed");
             }
             _ => panic!("Expected ContractCall error"),
         }
