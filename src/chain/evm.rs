@@ -2898,26 +2898,63 @@ fn decode_revert_reason(data: &str) -> Option<String> {
     Some(format!("UnknownError(0x{})", hex::encode(&bytes[0..4])))
 }
 
+/// Extract hex string starting at given position until non-hex character.
+fn extract_hex_at(s: &str, start: usize) -> &str {
+    let bytes = s.as_bytes();
+    let mut end = start;
+    while end < bytes.len() {
+        let c = bytes[end];
+        if c.is_ascii_hexdigit() || c == b'x' || c == b'X' {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    &s[start..end]
+}
+
 /// Extract revert reason from error debug string.
 ///
 /// Looks for patterns like `data: Some(RawValue("0x..."))` in error messages
 /// and decodes the hex data into a human-readable error.
 fn extract_multicall_revert(err_str: &str) -> Option<String> {
-    // Pattern 1: data: Some(RawValue("0x...")) - normal quotes
+    // Pattern 1: Nested hex in "Multicall3: call failed: 0x..." (in message field)
+    if let Some(idx) = err_str.find("Multicall3: call failed: 0x") {
+        let hex_start = idx + 25; // after "Multicall3: call failed: "
+        let hex_data = extract_hex_at(err_str, hex_start);
+        if hex_data.len() >= 10 {
+            // At least selector + some data
+            if let Some(decoded) = decode_revert_reason(hex_data) {
+                return Some(decoded);
+            }
+        }
+    }
+
+    // Pattern 2: data: Some(RawValue("0x...")) - normal quotes
     if let Some(idx) = err_str.find("data: Some(RawValue(\"") {
         let start = idx + 21;
         if let Some(end) = err_str[start..].find('"') {
             let hex_data = &err_str[start..start + end];
-            return decode_revert_reason(hex_data);
+            if let Some(decoded) = decode_revert_reason(hex_data) {
+                // Skip if it's just the Multicall3 wrapper message
+                if decoded != "Multicall3: call failed" {
+                    return Some(decoded);
+                }
+            }
         }
     }
 
-    // Pattern 2: data: Some(RawValue(\"0x...\")) - escaped quotes (from Debug formatting)
+    // Pattern 3: data: Some(RawValue(\"0x...\")) - escaped quotes (from Debug formatting)
     if let Some(idx) = err_str.find(r#"data: Some(RawValue(\""#) {
         let start = idx + 22;
         if let Some(end) = err_str[start..].find(r#"\""#) {
             let hex_data = &err_str[start..start + end];
-            return decode_revert_reason(hex_data);
+            if let Some(decoded) = decode_revert_reason(hex_data) {
+                // Skip if it's just the Multicall3 wrapper message
+                if decoded != "Multicall3: call failed" {
+                    return Some(decoded);
+                }
+            }
         }
     }
 
@@ -2936,7 +2973,8 @@ fn categorize_transport_error(e: impl std::fmt::Debug, context: &str) -> Facilit
     // Try to extract and decode contract revert data first
     if let Some(revert_reason) = extract_multicall_revert(&err_str) {
         tracing::error!("{context}: Contract reverted: {revert_reason}");
-        return FacilitatorLocalError::ContractCall(format!("{}: {}", context, revert_reason));
+        // Return just the revert reason, not the internal context
+        return FacilitatorLocalError::ContractCall(revert_reason);
     }
 
     if err_str.contains("Connection refused")
@@ -2953,7 +2991,8 @@ fn categorize_transport_error(e: impl std::fmt::Debug, context: &str) -> Facilit
         FacilitatorLocalError::ResourceExhaustion("Connection pool exhausted".to_string())
     } else {
         tracing::error!("{context}: Contract call failed: {err_str}");
-        FacilitatorLocalError::ContractCall(format!("{context}: Call failed"))
+        // Generic fallback - don't expose internal details
+        FacilitatorLocalError::ContractCall("Contract call failed".to_string())
     }
 }
 
@@ -3267,11 +3306,8 @@ mod tests {
         let result = categorize_transport_error(err, "multicall");
         match result {
             FacilitatorLocalError::ContractCall(msg) => {
-                assert!(
-                    msg.contains("Invalid signature order"),
-                    "Expected 'Invalid signature order' in message, got: {}",
-                    msg
-                );
+                // Should return just the revert reason, no internal context
+                assert_eq!(msg, "Invalid signature order");
             }
             _ => panic!("Expected ContractCall error"),
         }
@@ -3283,8 +3319,21 @@ mod tests {
         let result = categorize_transport_error(err, "test_context");
         match result {
             FacilitatorLocalError::ContractCall(msg) => {
-                assert!(msg.contains("test_context"));
-                assert!(msg.contains("Call failed"));
+                // Should return generic message, no internal context exposed
+                assert_eq!(msg, "Contract call failed");
+            }
+            _ => panic!("Expected ContractCall error"),
+        }
+    }
+
+    #[test]
+    fn test_categorize_multicall3_wrapper_stripped() {
+        // When Multicall3 wraps the error, we should still extract the nested reason
+        let err = r#"message: "execution reverted: Multicall3: call failed: 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000017496e76616c6964207369676e6174757265206f72646572000000000000000000""#;
+        let result = categorize_transport_error(err, "verify");
+        match result {
+            FacilitatorLocalError::ContractCall(msg) => {
+                assert_eq!(msg, "Invalid signature order");
             }
             _ => panic!("Expected ContractCall error"),
         }
