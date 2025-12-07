@@ -857,11 +857,31 @@ impl PaymentRequirements {
     /// This should not occur if `asset` was originally derived from a valid address.
     ///
     /// # Example
-    /// ```ignore
-    /// use x402_rs::types::{PaymentRequirements, TokenAsset};
     ///
-    /// let reqs: PaymentRequirements = /* from parsed response or constructed */;
+    /// ```
+    /// use infra402_facilitator::types::{
+    ///     PaymentRequirements, TokenAsset, MixedAddress, EvmAddress, TokenAmount, Scheme
+    /// };
+    /// use infra402_facilitator::network::Network;
+    /// use alloy::primitives::address;
+    /// use url::Url;
+    ///
+    /// let reqs = PaymentRequirements {
+    ///     scheme: Scheme::Exact,
+    ///     network: Network::BaseSepolia,
+    ///     max_amount_required: TokenAmount::from(1000000u64),
+    ///     resource: Url::parse("https://example.com/resource").unwrap(),
+    ///     description: "Test payment".into(),
+    ///     mime_type: "application/json".into(),
+    ///     output_schema: None,
+    ///     pay_to: MixedAddress::Evm(EvmAddress(address!("8778A819b0cD2Cf2B89B05c988615162804cbB3f"))),
+    ///     max_timeout_seconds: 300,
+    ///     asset: MixedAddress::Evm(EvmAddress(address!("036CbD53842c5426634e7929541eC2318f3dCF7e"))),
+    ///     extra: None,
+    /// };
+    ///
     /// let token: TokenAsset = reqs.token_asset();
+    /// assert_eq!(token.network, Network::BaseSepolia);
     /// ```
     #[allow(dead_code)] // Public for consumption by downstream crates.
     pub fn token_asset(&self) -> TokenAsset {
@@ -1269,16 +1289,17 @@ pub struct TokenDeploymentEip712 {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use x402_rs::types::{TokenAsset, EvmAddress};
-/// use x402_rs::network::Network;
+/// ```
+/// use infra402_facilitator::types::{TokenAsset, MixedAddress, EvmAddress};
+/// use infra402_facilitator::network::Network;
+/// use alloy::primitives::address;
 ///
 /// let asset = TokenAsset {
-///     address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".parse().unwrap(),
+///     address: MixedAddress::Evm(EvmAddress(address!("036CbD53842c5426634e7929541eC2318f3dCF7e"))),
 ///     network: Network::BaseSepolia,
 /// };
 ///
-/// assert_eq!(asset.address.to_string(), "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
+/// assert!(asset.address.to_string().to_lowercase().contains("036cbd53842c5426634e7929541ec2318f3dcf7e"));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct TokenAsset {
@@ -1306,26 +1327,29 @@ impl Display for TokenAsset {
 ///
 /// # Example
 ///
-/// ```ignore
-/// use x402_rs::types::{TokenAsset, TokenDeployment, TokenDeploymentEip712};
-/// use x402_rs::network::Network;
+/// ```
+/// use infra402_facilitator::types::{
+///     TokenAsset, TokenDeployment, TokenDeploymentEip712, MixedAddress, EvmAddress
+/// };
+/// use infra402_facilitator::network::Network;
+/// use alloy::primitives::address;
 ///
 /// let asset = TokenAsset {
-///     address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".parse().unwrap(),
+///     address: MixedAddress::Evm(EvmAddress(address!("036CbD53842c5426634e7929541eC2318f3dCF7e"))),
 ///     network: Network::BaseSepolia,
 /// };
 ///
 /// let deployment = TokenDeployment {
 ///     asset,
 ///     decimals: 6,
-///     eip712: TokenDeploymentEip712 {
-///         name: "MyToken".into(),
-///         version: "1".into(),
-///     },
+///     eip712: Some(TokenDeploymentEip712 {
+///         name: "USDC".into(),
+///         version: "2".into(),
+///     }),
 /// };
 ///
-/// assert_eq!(deployment.asset.address.to_string(), "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
 /// assert_eq!(deployment.decimals, 6);
+/// assert!(deployment.eip712.is_some());
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct TokenDeployment {

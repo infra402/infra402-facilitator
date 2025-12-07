@@ -2861,35 +2861,99 @@ impl NonceManager for PendingNonceManager {
     }
 }
 
+/// Decode revert data from contract calls into human-readable error messages.
+///
+/// Supports:
+/// - `Error(string)` (selector 0x08c379a0) - standard Solidity require/revert messages
+/// - `Panic(uint256)` (selector 0x4e487b71) - arithmetic panics
+/// - Unknown selectors - returns hex representation
+fn decode_revert_reason(data: &str) -> Option<String> {
+    let hex_data = data.strip_prefix("0x").unwrap_or(data);
+    let bytes = hex::decode(hex_data).ok()?;
+
+    if bytes.len() < 4 {
+        return None;
+    }
+
+    // Error(string) selector: 0x08c379a0
+    if bytes[0..4] == [0x08, 0xc3, 0x79, 0xa0] && bytes.len() >= 68 {
+        // ABI encoding: offset (32 bytes) + length (32 bytes) + string data
+        // Length is at bytes 36..68, but we only need the last few bytes for reasonable lengths
+        let len_bytes = &bytes[36..68];
+        let len = len_bytes
+            .iter()
+            .fold(0usize, |acc, &b| acc.saturating_mul(256).saturating_add(b as usize));
+        if len <= 1024 && bytes.len() >= 68 + len {
+            return String::from_utf8(bytes[68..68 + len].to_vec()).ok();
+        }
+    }
+
+    // Panic(uint256) selector: 0x4e487b71
+    if bytes[0..4] == [0x4e, 0x48, 0x7b, 0x71] && bytes.len() >= 36 {
+        let code = bytes[35];
+        return Some(format!("Panic(0x{:02x})", code));
+    }
+
+    // Return unknown selector as hex
+    Some(format!("UnknownError(0x{})", hex::encode(&bytes[0..4])))
+}
+
+/// Extract revert reason from error debug string.
+///
+/// Looks for patterns like `data: Some(RawValue("0x..."))` in error messages
+/// and decodes the hex data into a human-readable error.
+fn extract_multicall_revert(err_str: &str) -> Option<String> {
+    // Pattern 1: data: Some(RawValue("0x...")) - normal quotes
+    if let Some(idx) = err_str.find("data: Some(RawValue(\"") {
+        let start = idx + 21;
+        if let Some(end) = err_str[start..].find('"') {
+            let hex_data = &err_str[start..start + end];
+            return decode_revert_reason(hex_data);
+        }
+    }
+
+    // Pattern 2: data: Some(RawValue(\"0x...\")) - escaped quotes (from Debug formatting)
+    if let Some(idx) = err_str.find(r#"data: Some(RawValue(\""#) {
+        let start = idx + 22;
+        if let Some(end) = err_str[start..].find(r#"\""#) {
+            let hex_data = &err_str[start..start + end];
+            return decode_revert_reason(hex_data);
+        }
+    }
+
+    None
+}
+
 /// Categorize transport/RPC errors for appropriate HTTP status mapping.
 ///
 /// Distinguishes between:
 /// - Network/connection errors (DNS, TCP, timeouts) -> RpcProviderError (503)
 /// - Resource exhaustion (file descriptors, pool) -> ResourceExhaustion (503)
-/// - Contract execution errors -> ContractCall (502)
+/// - Contract execution errors -> ContractCall (502) with decoded revert reason
 fn categorize_transport_error(e: impl std::fmt::Debug, context: &str) -> FacilitatorLocalError {
     let err_str = format!("{:?}", e);
 
-    if err_str.contains("Connection refused") ||
-       err_str.contains("Connection reset") ||
-       err_str.contains("No route to host") ||
-       err_str.contains("timeout") ||
-       err_str.contains("Timeout") ||
-       err_str.contains("dns error") {
+    // Try to extract and decode contract revert data first
+    if let Some(revert_reason) = extract_multicall_revert(&err_str) {
+        tracing::error!("{context}: Contract reverted: {revert_reason}");
+        return FacilitatorLocalError::ContractCall(format!("{}: {}", context, revert_reason));
+    }
+
+    if err_str.contains("Connection refused")
+        || err_str.contains("Connection reset")
+        || err_str.contains("No route to host")
+        || err_str.contains("timeout")
+        || err_str.contains("Timeout")
+        || err_str.contains("dns error")
+    {
         tracing::error!("{context}: RPC connection error: {err_str}");
-        FacilitatorLocalError::RpcProviderError(
-            format!("{context}: Connection error")
-        )
+        FacilitatorLocalError::RpcProviderError(format!("{context}: Connection error"))
     } else if err_str.contains("Too many open files") || err_str.contains("EMFILE") {
         tracing::error!("{context}: File descriptor exhaustion: {err_str}");
-        FacilitatorLocalError::ResourceExhaustion(
-            "Connection pool exhausted".to_string()
-        )
+        FacilitatorLocalError::ResourceExhaustion("Connection pool exhausted".to_string())
     } else {
         tracing::error!("{context}: Contract call failed: {err_str}");
-        FacilitatorLocalError::ContractCall(
-            format!("{context}: Call failed")
-        )
+        FacilitatorLocalError::ContractCall(format!("{context}: Call failed"))
     }
 }
 
@@ -3054,6 +3118,175 @@ mod tests {
         {
             let nonce_lock = manager.nonces.get(&test_address).unwrap();
             assert_eq!(*nonce_lock.lock().await, u64::MAX);
+        }
+    }
+
+    // ========================================================================
+    // Revert Decoding Tests
+    // ========================================================================
+
+    #[test]
+    fn test_decode_error_string() {
+        // "Invalid signature order" encoded as Error(string)
+        let data = "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000017496e76616c6964207369676e6174757265206f72646572000000000000000000";
+        let result = decode_revert_reason(data);
+        assert_eq!(result, Some("Invalid signature order".to_string()));
+    }
+
+    #[test]
+    fn test_decode_error_string_without_prefix() {
+        // Same as above but without 0x prefix
+        let data = "08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000017496e76616c6964207369676e6174757265206f72646572000000000000000000";
+        let result = decode_revert_reason(data);
+        assert_eq!(result, Some("Invalid signature order".to_string()));
+    }
+
+    #[test]
+    fn test_decode_panic_code() {
+        // Panic(0x11) - arithmetic overflow
+        let data = "0x4e487b710000000000000000000000000000000000000000000000000000000000000011";
+        let result = decode_revert_reason(data);
+        assert_eq!(result, Some("Panic(0x11)".to_string()));
+    }
+
+    #[test]
+    fn test_decode_panic_code_division_by_zero() {
+        // Panic(0x12) - division by zero
+        let data = "0x4e487b710000000000000000000000000000000000000000000000000000000000000012";
+        let result = decode_revert_reason(data);
+        assert_eq!(result, Some("Panic(0x12)".to_string()));
+    }
+
+    #[test]
+    fn test_decode_custom_error() {
+        // Unknown 4-byte selector
+        let data = "0xdeadbeef00000000000000000000000000000000000000000000000000000000";
+        let result = decode_revert_reason(data);
+        assert_eq!(result, Some("UnknownError(0xdeadbeef)".to_string()));
+    }
+
+    #[test]
+    fn test_decode_empty_data() {
+        let result = decode_revert_reason("0x");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_decode_short_data() {
+        let result = decode_revert_reason("0xab");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_decode_invalid_hex() {
+        let result = decode_revert_reason("0xzzzz");
+        assert_eq!(result, None);
+    }
+
+    // ========================================================================
+    // Extract Multicall Revert Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_from_rawvalue_pattern() {
+        let err = r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted", data: Some(RawValue("0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000017496e76616c6964207369676e6174757265206f72646572000000000000000000")) }))"#;
+        let result = extract_multicall_revert(err);
+        assert_eq!(result, Some("Invalid signature order".to_string()));
+    }
+
+    #[test]
+    fn test_extract_no_data() {
+        let err = r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted" }))"#;
+        let result = extract_multicall_revert(err);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_extract_empty_data() {
+        let err = r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted", data: Some(RawValue("0x")) }))"#;
+        let result = extract_multicall_revert(err);
+        assert_eq!(result, None);
+    }
+
+    // ========================================================================
+    // Categorize Transport Error Tests
+    // ========================================================================
+
+    #[test]
+    fn test_categorize_connection_refused() {
+        let err = "Connection refused";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(result, FacilitatorLocalError::RpcProviderError(_)));
+    }
+
+    #[test]
+    fn test_categorize_connection_reset() {
+        let err = "Connection reset by peer";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(result, FacilitatorLocalError::RpcProviderError(_)));
+    }
+
+    #[test]
+    fn test_categorize_timeout() {
+        let err = "request timeout after 30s";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(result, FacilitatorLocalError::RpcProviderError(_)));
+    }
+
+    #[test]
+    fn test_categorize_dns_error() {
+        let err = "dns error: no such host";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(result, FacilitatorLocalError::RpcProviderError(_)));
+    }
+
+    #[test]
+    fn test_categorize_file_descriptor_exhaustion() {
+        let err = "Too many open files";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(
+            result,
+            FacilitatorLocalError::ResourceExhaustion(_)
+        ));
+    }
+
+    #[test]
+    fn test_categorize_emfile() {
+        let err = "EMFILE: too many open files in system";
+        let result = categorize_transport_error(err, "test");
+        assert!(matches!(
+            result,
+            FacilitatorLocalError::ResourceExhaustion(_)
+        ));
+    }
+
+    #[test]
+    fn test_categorize_contract_revert_with_reason() {
+        // Simulate actual error format from alloy transport
+        let err = r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted", data: Some(RawValue("0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000017496e76616c6964207369676e6174757265206f72646572000000000000000000")) }))"#;
+        let result = categorize_transport_error(err, "multicall");
+        match result {
+            FacilitatorLocalError::ContractCall(msg) => {
+                assert!(
+                    msg.contains("Invalid signature order"),
+                    "Expected 'Invalid signature order' in message, got: {}",
+                    msg
+                );
+            }
+            _ => panic!("Expected ContractCall error"),
+        }
+    }
+
+    #[test]
+    fn test_categorize_generic_error() {
+        let err = "some unknown error";
+        let result = categorize_transport_error(err, "test_context");
+        match result {
+            FacilitatorLocalError::ContractCall(msg) => {
+                assert!(msg.contains("test_context"));
+                assert!(msg.contains("Call failed"));
+            }
+            _ => panic!("Expected ContractCall error"),
         }
     }
 

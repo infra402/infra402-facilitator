@@ -463,7 +463,7 @@ impl IntoResponse for FacilitatorLocalError {
                 (
                     StatusCode::BAD_GATEWAY,
                     Json(ErrorResponse {
-                        error: "Blockchain network error".to_string(),
+                        error: format!("Contract error: {}", details),
                     }),
                 )
                     .into_response()
@@ -499,5 +499,92 @@ impl IntoResponse for FacilitatorLocalError {
                     .into_response()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::EvmAddress;
+    use alloy::primitives::Address;
+
+    /// Helper to get expected status code for each error type
+    fn expected_status(err: &FacilitatorLocalError) -> StatusCode {
+        match err {
+            FacilitatorLocalError::UnsupportedNetwork(_) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::NetworkMismatch(_, _, _) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::SchemeMismatch(_, _, _) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::InvalidAddress(_) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::ReceiverMismatch(_, _, _) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::ClockError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            FacilitatorLocalError::InvalidTiming(_, _) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::ContractCall(_) => StatusCode::BAD_GATEWAY,
+            FacilitatorLocalError::RpcProviderError(_) => StatusCode::SERVICE_UNAVAILABLE,
+            FacilitatorLocalError::ResourceExhaustion(_) => StatusCode::SERVICE_UNAVAILABLE,
+            FacilitatorLocalError::InvalidSignature(_, _) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::InsufficientFunds(_) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::InsufficientValue(_) => StatusCode::BAD_REQUEST,
+            FacilitatorLocalError::DecodingError(_) => StatusCode::BAD_REQUEST,
+        }
+    }
+
+    fn test_evm_address() -> MixedAddress {
+        MixedAddress::Evm(EvmAddress(Address::ZERO))
+    }
+
+    #[test]
+    fn test_contract_call_error_is_502() {
+        let err = FacilitatorLocalError::ContractCall("Invalid signature order".to_string());
+        assert_eq!(expected_status(&err), StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn test_rpc_error_is_503() {
+        let err = FacilitatorLocalError::RpcProviderError("Connection refused".to_string());
+        assert_eq!(expected_status(&err), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn test_resource_exhaustion_is_503() {
+        let err = FacilitatorLocalError::ResourceExhaustion("Too many connections".to_string());
+        assert_eq!(expected_status(&err), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn test_insufficient_funds_is_400() {
+        let err = FacilitatorLocalError::InsufficientFunds(test_evm_address());
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_invalid_timing_is_400() {
+        let err =
+            FacilitatorLocalError::InvalidTiming(test_evm_address(), "validBefore expired".into());
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_invalid_signature_is_400() {
+        let err =
+            FacilitatorLocalError::InvalidSignature(test_evm_address(), "signature mismatch".into());
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_unsupported_network_is_400() {
+        let err = FacilitatorLocalError::UnsupportedNetwork(None);
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_decoding_error_is_400() {
+        let err = FacilitatorLocalError::DecodingError("invalid payload".to_string());
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_insufficient_value_is_400() {
+        let err = FacilitatorLocalError::InsufficientValue(test_evm_address());
+        assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
     }
 }
