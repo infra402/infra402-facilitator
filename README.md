@@ -10,7 +10,7 @@ A hardened [x402 protocol](https://x402.org) facilitator built on [x402-rs](http
 - ✅ **x402 Compliance**: Full protocol implementation with TypeScript/Go/Rust SDK compatibility
 - ✅ **Multi-Chain**: Base, BSC, Solana, Avalanche, Polygon, Sei, XDC networks
 - ✅ **Payment Verification**: Cryptographic signature validation and balance checks with RPC batching/caching (2-3x faster)
-- ✅ **Payment Settlement**: On-chain transaction submission and monitoring with improved nonce management
+- ✅ **Payment Settlement**: On-chain transaction submission with human-readable error messages
 - ✨ **Post-Settlement Hooks**: Execute custom contract calls atomically with settlements via Multicall3
 - 🪙 **Token Support**: ERC-20 with EIP-3009 signature-based transfers, configurable custom tokens via `tokens-custom.toml`
 
@@ -181,6 +181,15 @@ max_wait_ms = 1000
 - **~75% gas cost reduction** (shared transaction overhead)
 - **Per-network configuration** (tune for each blockchain's characteristics)
 
+**Gas Estimation Buffer** (optional):
+```toml
+[transaction]
+gas_buffer = 1.0  # Default: no buffer
+
+[transaction.chains.bsc]
+gas_buffer = 1.2  # 20% buffer for chains with inaccurate estimates
+```
+
 **→ [Batch Settlement Guide](docs/BATCH_SETTLEMENT.md)**
 
 ### Post-Settlement Hooks
@@ -267,7 +276,7 @@ log_security_events = true
 ## API Endpoints
 
 ### Public
-- `GET /` - Service information
+- `GET /` - Interactive API documentation with expandable request/response specs
 - `GET /health` - Health check with supported networks
 - `GET /supported` - List supported payment schemes
 
