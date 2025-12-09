@@ -599,28 +599,58 @@ impl MetaEvmProvider for EvmProvider {
             txr = txr.with_gas_limit(buffered_gas);
         }
 
-        // Send transaction with error handling for nonce reset
-        let pending_tx = match self.inner.send_transaction(txr).await {
-            Ok(pending) => pending,
-            Err(e) => {
-                let error_str = format!("{e:?}");
-                // Detect nonce collision errors
-                if error_str.contains("nonce too low") || error_str.contains("nonce too high") {
-                    tracing::error!(
-                        from = %from_address,
-                        error = %error_str,
-                        "❌ NONCE COLLISION DETECTED - transaction rejected due to nonce mismatch"
-                    );
-                } else if error_str.contains("replacement transaction underpriced") {
-                    tracing::warn!(
-                        from = %from_address,
-                        error = %error_str,
-                        "transaction replacement attempted with insufficient gas price"
-                    );
+        // Send transaction with error handling and nonce retry logic
+        const MAX_NONCE_RETRIES: u32 = 1;
+        let mut nonce_retry_count = 0;
+
+        let pending_tx = loop {
+            match self.inner.send_transaction(txr.clone()).await {
+                Ok(pending) => break pending,
+                Err(e) => {
+                    let error_str = format!("{e:?}");
+
+                    // Handle nonce mismatch - parse expected nonce and retry
+                    let is_nonce_error = error_str.contains("nonce too low")
+                        || error_str.contains("nonce too high");
+
+                    if is_nonce_error && nonce_retry_count < MAX_NONCE_RETRIES {
+                        if let Some(expected_nonce) =
+                            parse_expected_nonce_from_error(&error_str)
+                        {
+                            tracing::warn!(
+                                from = %from_address,
+                                expected_nonce,
+                                error = %error_str,
+                                "nonce mismatch detected - correcting and retrying"
+                            );
+                            // Set to expected_nonce - 1 so next get_next_nonce() returns expected_nonce
+                            self.nonce_manager
+                                .set_nonce(from_address, expected_nonce.saturating_sub(1))
+                                .await;
+                            nonce_retry_count += 1;
+                            continue;
+                        }
+                    }
+
+                    // Log appropriate error/warning for unrecoverable errors
+                    if is_nonce_error {
+                        tracing::error!(
+                            from = %from_address,
+                            error = %error_str,
+                            "nonce mismatch not recoverable after retry"
+                        );
+                    } else if error_str.contains("replacement transaction underpriced") {
+                        tracing::warn!(
+                            from = %from_address,
+                            error = %error_str,
+                            "transaction replacement attempted with insufficient gas price"
+                        );
+                    }
+
+                    // Transaction submission failed - reset nonce to force requery
+                    self.nonce_manager.reset_nonce(from_address).await;
+                    return Err(FacilitatorLocalError::ContractCall(error_str));
                 }
-                // Transaction submission failed - reset nonce to force requery
-                self.nonce_manager.reset_nonce(from_address).await;
-                return Err(FacilitatorLocalError::ContractCall(error_str));
             }
         };
 
@@ -2861,6 +2891,20 @@ impl NonceManager for PendingNonceManager {
     }
 }
 
+/// Parse the expected nonce from RPC error messages.
+///
+/// Handles error message formats like:
+/// - "nonce too low: next nonce 1210, tx nonce 1209"
+/// - "nonce too high: next nonce 1208, tx nonce 1210"
+///
+/// Returns the "next nonce" value that the RPC expects.
+fn parse_expected_nonce_from_error(msg: &str) -> Option<u64> {
+    msg.find("next nonce ")
+        .map(|i| &msg[i + 11..])
+        .and_then(|s| s.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|n| n.parse().ok())
+}
+
 /// Decode revert data from contract calls into human-readable error messages.
 ///
 /// Supports:
@@ -3013,6 +3057,21 @@ impl PendingNonceManager {
             tracing::debug!(%address, "reset nonce cache, will requery on next use");
         }
     }
+
+    /// Sets the nonce cache to a specific value.
+    ///
+    /// This is used when an RPC error tells us the expected nonce (e.g., "nonce too low: next nonce X").
+    /// Instead of resetting and re-querying (which might return stale data), we use the nonce
+    /// from the error message directly.
+    pub async fn set_nonce(&self, address: Address, nonce: u64) {
+        let lock = self
+            .nonces
+            .entry(address)
+            .or_insert_with(|| Arc::new(Mutex::new(u64::MAX)));
+        let mut cached = lock.value().lock().await;
+        *cached = nonce;
+        tracing::info!(%address, nonce, "nonce cache set from RPC error");
+    }
 }
 
 #[cfg(test)]
@@ -3161,6 +3220,88 @@ mod tests {
             let nonce_lock = manager.nonces.get(&test_address).unwrap();
             assert_eq!(*nonce_lock.lock().await, u64::MAX);
         }
+    }
+
+    #[tokio::test]
+    async fn test_set_nonce_creates_entry() {
+        let manager = PendingNonceManager::default();
+        let test_address = address!("0000000000000000000000000000000000000001");
+
+        // Address doesn't exist yet
+        assert!(!manager.nonces.contains_key(&test_address));
+
+        // Set nonce should create the entry
+        manager.set_nonce(test_address, 100).await;
+
+        // Verify nonce is set
+        {
+            let nonce_lock = manager.nonces.get(&test_address).unwrap();
+            assert_eq!(*nonce_lock.lock().await, 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_set_nonce_overwrites_existing() {
+        let manager = PendingNonceManager::default();
+        let test_address = address!("0000000000000000000000000000000000000002");
+
+        // Set initial nonce
+        {
+            let nonce_lock = manager
+                .nonces
+                .entry(test_address)
+                .or_insert_with(|| Arc::new(Mutex::new(0)));
+            *nonce_lock.lock().await = 50;
+        }
+
+        // Set nonce to new value
+        manager.set_nonce(test_address, 1209).await;
+
+        // Verify nonce is updated
+        {
+            let nonce_lock = manager.nonces.get(&test_address).unwrap();
+            assert_eq!(*nonce_lock.lock().await, 1209);
+        }
+    }
+
+    // ========================================================================
+    // Nonce Error Parsing Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_nonce_too_low_error() {
+        let msg = "nonce too low: next nonce 1210, tx nonce 1209";
+        assert_eq!(parse_expected_nonce_from_error(msg), Some(1210));
+    }
+
+    #[test]
+    fn test_parse_nonce_too_high_error() {
+        let msg = "nonce too high: next nonce 1208, tx nonce 1210";
+        assert_eq!(parse_expected_nonce_from_error(msg), Some(1208));
+    }
+
+    #[test]
+    fn test_parse_nonce_wrapped_in_error_payload() {
+        // The actual error format from the logs (wrapped in ErrorPayload debug format)
+        let msg = r#"ErrorResp(ErrorPayload { code: -32000, message: "nonce too low: next nonce 1210, tx nonce 1209", data: None })"#;
+        assert_eq!(parse_expected_nonce_from_error(msg), Some(1210));
+    }
+
+    #[test]
+    fn test_parse_nonce_no_match() {
+        let msg = "some other error message";
+        assert_eq!(parse_expected_nonce_from_error(msg), None);
+    }
+
+    #[test]
+    fn test_parse_nonce_empty_string() {
+        assert_eq!(parse_expected_nonce_from_error(""), None);
+    }
+
+    #[test]
+    fn test_parse_nonce_large_value() {
+        let msg = "nonce too low: next nonce 999999999, tx nonce 999999998";
+        assert_eq!(parse_expected_nonce_from_error(msg), Some(999999999));
     }
 
     // ========================================================================
