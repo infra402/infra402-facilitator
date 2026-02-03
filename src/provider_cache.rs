@@ -13,9 +13,15 @@
 //! - `RPC_URL_BASE`, `RPC_URL_BASE_SEPOLIA` — RPC endpoints per network
 //!
 //! Example usage:
-//! ```ignore
+//! ```no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use infra402_facilitator::provider_cache::{ProviderCache, ProviderMap};
+//! use infra402_facilitator::network::Network;
+//!
 //! let provider_cache = ProviderCache::from_env().await?;
-//! let provider = provider_cache.by_network(Network::Base)?;
+//! let _provider = provider_cache.by_network(Network::Base);
+//! # Ok(())
+//! # }
 //! ```
 
 use std::borrow::Borrow;

@@ -16,15 +16,17 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use infra402_facilitator::scheme::{SchemeRegistry, X402SchemeId};
+//! ```
+//! use std::sync::Arc;
+//! use infra402_facilitator::scheme::{SchemeRegistry, ExactScheme};
+//! use infra402_facilitator::types::Scheme;
 //!
 //! let mut registry = SchemeRegistry::new();
-//! registry.register(exact_scheme_handler);
+//! registry.register(Arc::new(ExactScheme));
 //!
 //! // Look up handler by scheme
-//! if let Some(handler) = registry.get(&Scheme::Exact) {
-//!     handler.verify(&request).await?;
+//! if let Some(_handler) = registry.get(&Scheme::Exact) {
+//!     println!("Found handler for exact scheme");
 //! }
 //! ```
 
@@ -34,7 +36,7 @@
 
 mod traits;
 
-pub use traits::{SchemeRegistry, X402SchemeFacilitator, X402SchemeId};
+pub use traits::{ExactScheme, SchemeRegistry, X402SchemeFacilitator, X402SchemeId};
 
 use crate::types::Scheme;
 

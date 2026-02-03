@@ -95,15 +95,16 @@ pub trait DynSchemeFacilitator: X402SchemeId + Send + Sync {
 ///
 /// # Example
 ///
-/// ```ignore
-/// let mut registry = SchemeRegistry::new();
-/// registry.register(Arc::new(ExactSchemeHandler::new(provider)));
+/// ```
+/// use std::sync::Arc;
+/// use infra402_facilitator::scheme::{SchemeRegistry, ExactScheme};
+/// use infra402_facilitator::types::Scheme;
 ///
-/// // Route a request
-/// let scheme = Scheme::Exact;
-/// if let Some(handler) = registry.get(&scheme) {
-///     handler.verify_json(&payload, &requirements).await?;
-/// }
+/// let mut registry = SchemeRegistry::new();
+/// registry.register(Arc::new(ExactScheme));
+///
+/// // Look up by scheme
+/// assert!(registry.get(&Scheme::Exact).is_some());
 /// ```
 pub struct SchemeRegistry<T> {
     handlers: HashMap<Scheme, Arc<T>>,
