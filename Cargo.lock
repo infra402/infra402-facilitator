@@ -9436,7 +9436,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "x402-reqwest",
- "x402-rs",
 ]
 
 [[package]]

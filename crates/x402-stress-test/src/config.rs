@@ -34,12 +34,19 @@ pub struct CliArgs {
     /// Print stats every N seconds
     #[arg(long, default_value = "1")]
     pub stats_interval_seconds: u64,
+
+    /// Protocol version to use (1 or 2)
+    #[arg(long, default_value = "1")]
+    pub protocol_version: u8,
 }
 
 impl CliArgs {
     pub fn validate(&self) -> Result<()> {
         if self.duration_seconds.is_none() && self.total_requests.is_none() {
             anyhow::bail!("Must specify either --duration-seconds or --total-requests");
+        }
+        if self.protocol_version != 1 && self.protocol_version != 2 {
+            anyhow::bail!("--protocol-version must be 1 or 2");
         }
         Ok(())
     }

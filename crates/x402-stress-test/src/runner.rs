@@ -5,7 +5,11 @@ use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result};
 use chrono::Utc;
-use infra402_facilitator::types::{PaymentRequirements, VerifyResponse};
+use infra402_facilitator::proto::v2::{
+    ExactSchemePayload, PaymentPayload as PaymentPayloadV2,
+    PaymentRequirements as PaymentRequirementsV2, ResourceInfo, X402Version2,
+};
+use infra402_facilitator::types::{PaymentRequirements, Scheme, VerifyResponse};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -64,6 +68,7 @@ impl StressTest {
             "verify + settle pairs"
         };
         println!("Test Mode: {}", test_mode);
+        println!("Protocol Version: v{}", self.config.cli.protocol_version);
 
         if let Some(duration) = self.config.cli.duration_seconds {
             println!("Duration: {}s", duration);
@@ -252,7 +257,7 @@ async fn execute_request(
     ).expect("Invalid network value");
 
     let payment_requirements = PaymentRequirements {
-        scheme: infra402_facilitator::types::Scheme::Exact,
+        scheme: Scheme::Exact,
         network,
         max_amount_required: infra402_facilitator::types::TokenAmount(
             U256::from_str(&config.env.amount).expect("Invalid AMOUNT format")
@@ -293,7 +298,20 @@ async fn execute_request(
         }
     };
 
-    // Execute request
+    // Branch on protocol version
+    if config.cli.protocol_version == 2 {
+        execute_request_v2(client, payment_payload, payment_requirements, is_verify).await
+    } else {
+        execute_request_v1(client, payment_payload, payment_requirements, is_verify).await
+    }
+}
+
+async fn execute_request_v1(
+    client: &FacilitatorClient,
+    payment_payload: infra402_facilitator::types::PaymentPayload,
+    payment_requirements: PaymentRequirements,
+    is_verify: bool,
+) -> RequestOutcome {
     if is_verify {
         match client
             .verify(payment_payload, payment_requirements)
@@ -312,6 +330,82 @@ async fn execute_request(
     } else {
         match client
             .settle(payment_payload, payment_requirements)
+            .await
+        {
+            Ok(response) => {
+                if response.success {
+                    RequestOutcome::SettleSuccess
+                } else {
+                    RequestOutcome::SettleFailure {
+                        reason: response
+                            .error_reason
+                            .map(|r| format!("{:?}", r))
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    }
+                }
+            }
+            Err(e) => RequestOutcome::HttpError {
+                error: format!("{}", e),
+            },
+        }
+    }
+}
+
+async fn execute_request_v2(
+    client: &FacilitatorClient,
+    payment_payload: infra402_facilitator::types::PaymentPayload,
+    payment_requirements: PaymentRequirements,
+    is_verify: bool,
+) -> RequestOutcome {
+    // Convert v1 types to v2 types
+    let chain_id = payment_requirements.network.to_chain_id();
+
+    let resource = ResourceInfo {
+        url: payment_requirements.resource.clone(),
+        description: payment_requirements.description.clone(),
+        mime_type: payment_requirements.mime_type.clone(),
+        output_schema: payment_requirements.output_schema.clone(),
+        content_length: None,
+        preview_url: None,
+    };
+
+    let payment_requirements_v2 = PaymentRequirementsV2 {
+        scheme: payment_requirements.scheme,
+        chain_id: chain_id.clone(),
+        max_amount_required: payment_requirements.max_amount_required,
+        resource,
+        pay_to: payment_requirements.pay_to.clone(),
+        max_timeout_seconds: payment_requirements.max_timeout_seconds,
+        asset: payment_requirements.asset.clone(),
+        payload: ExactSchemePayload::default(),
+        extra: payment_requirements.extra.clone(),
+    };
+
+    let payment_payload_v2 = PaymentPayloadV2 {
+        x402_version: X402Version2,
+        scheme: payment_payload.scheme,
+        chain_id,
+        payload: payment_payload.payload,
+    };
+
+    if is_verify {
+        match client
+            .verify_v2(payment_payload_v2, payment_requirements_v2)
+            .await
+        {
+            Ok(response) => match response {
+                VerifyResponse::Valid { .. } => RequestOutcome::VerifyValid,
+                VerifyResponse::Invalid { reason, .. } => RequestOutcome::VerifyInvalid {
+                    reason: format!("{:?}", reason),
+                },
+            },
+            Err(e) => RequestOutcome::HttpError {
+                error: format!("{}", e),
+            },
+        }
+    } else {
+        match client
+            .settle_v2(payment_payload_v2, payment_requirements_v2)
             .await
         {
             Ok(response) => {

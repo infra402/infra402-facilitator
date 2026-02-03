@@ -12,7 +12,6 @@ path = "src/main.rs"
 # X402 dependencies
 infra402-facilitator = { path = "../.." }
 x402-reqwest = { path = "../x402-reqwest" }
-x402-rs = { version = "0.9" }
 
 # Alloy for EVM types and signing
 alloy = { version = "1.1.0", features = ["signers"] }
