@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::SystemTimeError;
 
+use crate::chain::aptos::AptosProvider;
 use crate::chain::evm::EvmProvider;
 use crate::chain::solana::SolanaProvider;
 use crate::facilitator::Facilitator;
@@ -11,12 +12,24 @@ use crate::types::{
     VerifyRequest, VerifyResponse,
 };
 
+pub mod aptos;
+pub mod chain_id;
 pub mod evm;
 pub mod solana;
 
+pub use chain_id::ChainId;
+
+/// Network-specific provider for blockchain interactions.
+///
+/// Each variant handles a different blockchain family with its own
+/// transaction model and signing requirements.
 pub enum NetworkProvider {
+    /// EVM-compatible chains (Ethereum, Base, Polygon, etc.)
     Evm(EvmProvider),
+    /// Solana blockchain
     Solana(SolanaProvider),
+    /// Aptos blockchain (Move-based)
+    Aptos(AptosProvider),
 }
 
 pub trait FromEnvByNetworkBuild: Sized {
@@ -41,6 +54,10 @@ impl FromEnvByNetworkBuild for NetworkProvider {
                 let provider = SolanaProvider::from_env(network, token_manager).await?;
                 provider.map(NetworkProvider::Solana)
             }
+            NetworkFamily::Aptos => {
+                let provider = AptosProvider::from_env(network, token_manager).await?;
+                provider.map(NetworkProvider::Aptos)
+            }
         };
         Ok(provider)
     }
@@ -56,6 +73,7 @@ impl NetworkProviderOps for NetworkProvider {
         match self {
             NetworkProvider::Evm(provider) => provider.signer_address(),
             NetworkProvider::Solana(provider) => provider.signer_address(),
+            NetworkProvider::Aptos(provider) => provider.signer_address(),
         }
     }
 
@@ -63,6 +81,7 @@ impl NetworkProviderOps for NetworkProvider {
         match self {
             NetworkProvider::Evm(provider) => provider.network(),
             NetworkProvider::Solana(provider) => provider.network(),
+            NetworkProvider::Aptos(provider) => provider.network(),
         }
     }
 }
@@ -74,6 +93,7 @@ impl Facilitator for NetworkProvider {
         match self {
             NetworkProvider::Evm(provider) => provider.verify(request).await,
             NetworkProvider::Solana(provider) => provider.verify(request).await,
+            NetworkProvider::Aptos(provider) => provider.verify(request).await,
         }
     }
 
@@ -81,6 +101,7 @@ impl Facilitator for NetworkProvider {
         match self {
             NetworkProvider::Evm(provider) => provider.settle(request).await,
             NetworkProvider::Solana(provider) => provider.settle(request).await,
+            NetworkProvider::Aptos(provider) => provider.settle(request).await,
         }
     }
 
@@ -88,6 +109,7 @@ impl Facilitator for NetworkProvider {
         match self {
             NetworkProvider::Evm(provider) => provider.supported().await,
             NetworkProvider::Solana(provider) => provider.supported().await,
+            NetworkProvider::Aptos(provider) => provider.supported().await,
         }
     }
 }

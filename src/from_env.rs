@@ -24,6 +24,13 @@ pub const ENV_RPC_SEI: &str = "RPC_URL_SEI";
 pub const ENV_RPC_SEI_TESTNET: &str = "RPC_URL_SEI_TESTNET";
 pub const ENV_RPC_BSC_TESTNET: &str = "RPC_URL_BSC_TESTNET";
 pub const ENV_RPC_BSC: &str = "RPC_URL_BSC";
+pub const ENV_RPC_XRPL_EVM: &str = "RPC_URL_XRPL_EVM";
+pub const ENV_RPC_PEAQ: &str = "RPC_URL_PEAQ";
+pub const ENV_RPC_IOTEX: &str = "RPC_URL_IOTEX";
+pub const ENV_RPC_CELO: &str = "RPC_URL_CELO";
+pub const ENV_RPC_CELO_ALFAJORES: &str = "RPC_URL_CELO_ALFAJORES";
+pub const ENV_RPC_APTOS: &str = "APTOS_RPC_URL";
+pub const ENV_RPC_APTOS_TESTNET: &str = "APTOS_TESTNET_RPC_URL";
 
 pub fn rpc_env_name_from_network(network: Network) -> &'static str {
     match network {
@@ -40,6 +47,13 @@ pub fn rpc_env_name_from_network(network: Network) -> &'static str {
         Network::SeiTestnet => ENV_RPC_SEI_TESTNET,
         Network::BscTestnet => ENV_RPC_BSC_TESTNET,
         Network::Bsc => ENV_RPC_BSC,
+        Network::XrplEvm => ENV_RPC_XRPL_EVM,
+        Network::Peaq => ENV_RPC_PEAQ,
+        Network::IoTeX => ENV_RPC_IOTEX,
+        Network::Celo => ENV_RPC_CELO,
+        Network::CeloAlfajores => ENV_RPC_CELO_ALFAJORES,
+        Network::Aptos => ENV_RPC_APTOS,
+        Network::AptosTestnet => ENV_RPC_APTOS_TESTNET,
     }
 }
 

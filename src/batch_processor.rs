@@ -54,6 +54,14 @@ impl BatchProcessor {
                 );
                 Self::process_individually_fallback(network_provider, requests).await
             }
+            NetworkProvider::Aptos(_aptos_provider) => {
+                // Aptos batching not implemented yet - process individually
+                tracing::info!(
+                    batch_size,
+                    "Aptos batching not implemented - processing settlements individually"
+                );
+                Self::process_individually_fallback(network_provider, requests).await
+            }
         }
     }
 

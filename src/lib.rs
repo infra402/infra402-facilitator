@@ -26,12 +26,14 @@ pub mod from_env;
 pub mod handlers;
 pub mod hooks;
 pub mod network;
-pub mod tokens;
+pub mod proto;
 pub mod provider_cache;
+pub mod scheme;
 pub mod security;
 pub mod sig_down;
 pub mod telemetry;
 pub mod timestamp;
+pub mod tokens;
 pub mod types;
 
 // Hidden re-exports just for macro expansion.

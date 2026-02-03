@@ -176,20 +176,10 @@ impl TryFrom<Network> for EvmChain {
     /// # Errors
     /// Returns [`FacilitatorLocalError::UnsupportedNetwork`] for non-EVM networks (e.g. Solana).
     fn try_from(value: Network) -> Result<Self, Self::Error> {
-        match value {
-            Network::BaseSepolia => Ok(EvmChain::new(value, 84532)),
-            Network::Base => Ok(EvmChain::new(value, 8453)),
-            Network::XdcMainnet => Ok(EvmChain::new(value, 50)),
-            Network::AvalancheFuji => Ok(EvmChain::new(value, 43113)),
-            Network::Avalanche => Ok(EvmChain::new(value, 43114)),
-            Network::Solana => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::SolanaDevnet => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::PolygonAmoy => Ok(EvmChain::new(value, 80002)),
-            Network::Polygon => Ok(EvmChain::new(value, 137)),
-            Network::Sei => Ok(EvmChain::new(value, 1329)),
-            Network::SeiTestnet => Ok(EvmChain::new(value, 1328)),
-            Network::BscTestnet => Ok(EvmChain::new(value, 97)),
-            Network::Bsc => Ok(EvmChain::new(value, 56)),
+        // Use the Network's evm_chain_id() method for EVM networks
+        match value.evm_chain_id() {
+            Some(chain_id) => Ok(EvmChain::new(value, chain_id)),
+            None => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
         }
     }
 }
@@ -356,7 +346,7 @@ impl EvmProvider {
         let filler = JoinFill::new(
             GasFiller,
             JoinFill::new(
-                BlobGasFiller,
+                BlobGasFiller::default(),
                 JoinFill::new(NonceFiller::new(nonce_manager.clone()), ChainIdFiller::default()),
             ),
         );
@@ -696,20 +686,18 @@ impl FromEnvByNetworkBuild for EvmProvider {
             }
         };
         let wallet = from_env::SignerType::from_env()?.make_evm_wallet()?;
+        // Determine if network supports EIP-1559 gas pricing
+        // Most modern EVM chains support EIP-1559, except for some like XDC and BSC
         let is_eip1559 = match network {
-            Network::BaseSepolia => true,
-            Network::Base => true,
             Network::XdcMainnet => false,
-            Network::AvalancheFuji => true,
-            Network::Avalanche => true,
-            Network::Solana => false,
-            Network::SolanaDevnet => false,
-            Network::PolygonAmoy => true,
-            Network::Polygon => true,
-            Network::Sei => true,
-            Network::SeiTestnet => true,
             Network::BscTestnet => false,
             Network::Bsc => false,
+            // Non-EVM networks (should not reach here but handle for completeness)
+            Network::Solana | Network::SolanaDevnet | Network::Aptos | Network::AptosTestnet => {
+                false
+            }
+            // All other EVM chains support EIP-1559
+            _ => true,
         };
 
         // Use shared TokenManager if provided, otherwise create one (for backwards compatibility)

@@ -8,6 +8,14 @@
 //!
 //! Each endpoint consumes or produces structured JSON payloads defined in `x402-rs`,
 //! and is compatible with official x402 client SDKs.
+//!
+//! # Protocol Version Support
+//!
+//! The handlers support both v1 and v2 of the x402 protocol:
+//! - v1: Original protocol (default for backward compatibility)
+//! - v2: Extended protocol with CAIP-2 chain IDs and enhanced metadata
+//!
+//! Version detection is automatic based on the `x402Version` field in requests.
 
 use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
@@ -21,6 +29,7 @@ use tracing::instrument;
 
 use crate::chain::FacilitatorLocalError;
 use crate::facilitator::Facilitator;
+use crate::proto::{ProtocolVersion, detect_version};
 use crate::security::abuse::AbuseDetector;
 use crate::types::{
     ErrorResponse, FacilitatorErrorReason, MixedAddress, SettleRequest, VerifyRequest,
@@ -32,8 +41,8 @@ pub fn routes() -> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::
     type FacilitatorType = crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>;
     Router::new()
         .route("/", get(get_root))
-        .route("/verify", post(post_verify::<FacilitatorType>))
-        .route("/settle", post(post_settle))
+        .route("/verify", post(post_verify_versioned::<FacilitatorType>))
+        .route("/settle", post(post_settle_versioned))
         .route("/supported", get(get_supported::<FacilitatorType>))
         .route("/health", get(get_health::<FacilitatorType>))
 }
@@ -235,7 +244,69 @@ where
     get_supported(State(facilitator)).await
 }
 
-/// `POST /verify`: Facilitator-side verification of a proposed x402 payment.
+/// `POST /verify`: Facilitator-side verification with protocol version detection.
+///
+/// This endpoint automatically detects the protocol version from the request
+/// and routes to the appropriate handler (v1 or v2).
+///
+/// Responds with a [`VerifyResponse`] indicating whether the payment can be accepted.
+///
+/// Requires API key authentication if enabled via `API_KEYS` environment variable.
+#[instrument(skip_all)]
+pub async fn post_verify_versioned<F>(
+    State(facilitator): State<Arc<F>>,
+    Extension(abuse_detector): Extension<AbuseDetector>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse
+where
+    F: Facilitator<Error = FacilitatorLocalError>,
+{
+    let version = detect_version(&body);
+
+    match version {
+        ProtocolVersion::V1 => {
+            // Parse as v1 request
+            match serde_json::from_value::<VerifyRequest>(body.clone()) {
+                Ok(request) => {
+                    post_verify(State(facilitator), Extension(abuse_detector), ConnectInfo(addr), Json(request)).await.into_response()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to parse v1 verify request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: format!("Invalid v1 request: {e}"),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        ProtocolVersion::V2 => {
+            // For v2 requests, we convert to v1 and process
+            // Full v2 support will be added incrementally
+            tracing::debug!("Processing v2 verify request (converting to v1)");
+            match convert_v2_to_v1_verify(&body) {
+                Ok(v1_request) => {
+                    post_verify(State(facilitator), Extension(abuse_detector), ConnectInfo(addr), Json(v1_request)).await.into_response()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to convert v2 to v1 verify request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: format!("Invalid v2 request: {e}"),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    }
+}
+
+/// `POST /verify`: Facilitator-side verification of a proposed x402 payment (v1).
 ///
 /// This endpoint checks whether a given payment payload satisfies the declared
 /// [`PaymentRequirements`], including signature validity, scheme match, and fund sufficiency.
@@ -271,7 +342,79 @@ where
     }
 }
 
-/// `POST /settle`: Facilitator-side execution of a valid x402 payment on-chain.
+/// `POST /settle`: Facilitator-side execution with protocol version detection.
+///
+/// This endpoint automatically detects the protocol version from the request
+/// and routes to the appropriate handler (v1 or v2).
+#[instrument(skip_all)]
+pub async fn post_settle_versioned(
+    State(facilitator): State<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>,
+    Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
+    Extension(batch_config): Extension<crate::config::BatchSettlementConfig>,
+    Extension(abuse_detector): Extension<AbuseDetector>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let version = detect_version(&body);
+
+    match version {
+        ProtocolVersion::V1 => {
+            match serde_json::from_value::<SettleRequest>(body.clone()) {
+                Ok(request) => {
+                    post_settle(
+                        State(facilitator),
+                        Extension(batch_queue_manager),
+                        Extension(batch_config),
+                        Extension(abuse_detector),
+                        ConnectInfo(addr),
+                        Json(request),
+                    )
+                    .await
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to parse v1 settle request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: format!("Invalid v1 request: {e}"),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        ProtocolVersion::V2 => {
+            tracing::debug!("Processing v2 settle request (converting to v1)");
+            match convert_v2_to_v1_settle(&body) {
+                Ok(v1_request) => {
+                    post_settle(
+                        State(facilitator),
+                        Extension(batch_queue_manager),
+                        Extension(batch_config),
+                        Extension(abuse_detector),
+                        ConnectInfo(addr),
+                        Json(v1_request),
+                    )
+                    .await
+                    .into_response()
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to convert v2 to v1 settle request");
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: format!("Invalid v2 request: {e}"),
+                        }),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    }
+}
+
+/// `POST /settle`: Facilitator-side execution of a valid x402 payment on-chain (v1).
 ///
 /// Given a valid [`SettleRequest`], this endpoint attempts to execute the payment
 /// via ERC-3009 `transferWithAuthorization`, and returns a [`SettleResponse`] with transaction details.
@@ -334,6 +477,16 @@ pub async fn post_settle(
                     }
                 }
             }
+            crate::chain::NetworkProvider::Aptos(aptos_provider) => {
+                // Aptos uses different address format
+                use crate::types::MixedAddress;
+                match aptos_provider.signer_address() {
+                    MixedAddress::Evm(addr) => addr.0,
+                    MixedAddress::Solana(_) | MixedAddress::Offchain(_) => {
+                        alloy::primitives::Address::ZERO
+                    }
+                }
+            }
         };
 
         tracing::debug!(
@@ -385,6 +538,12 @@ pub async fn post_settle(
                 use crate::facilitator::Facilitator;
                 network_provider.as_ref().settle(&body).await
             }
+            crate::chain::NetworkProvider::Aptos(_aptos_provider) => {
+                // Aptos settlement
+                tracing::debug!(%network, "direct aptos settlement");
+                use crate::facilitator::Facilitator;
+                network_provider.as_ref().settle(&body).await
+            }
         }
     };
 
@@ -408,6 +567,96 @@ pub async fn post_settle(
 
 fn invalid_schema(payer: Option<MixedAddress>) -> VerifyResponse {
     VerifyResponse::invalid(payer, FacilitatorErrorReason::InvalidScheme)
+}
+
+/// Converts a v2 verify request JSON to a v1 VerifyRequest.
+///
+/// This allows processing v2 requests through the existing v1 infrastructure
+/// while full v2 support is being implemented.
+fn convert_v2_to_v1_verify(v2_json: &serde_json::Value) -> Result<VerifyRequest, String> {
+    use crate::chain::ChainId;
+    use crate::network::Network;
+
+    // Extract payment_payload
+    let payment_payload = v2_json
+        .get("paymentPayload")
+        .ok_or("missing paymentPayload")?;
+
+    // Convert chainId to network if present
+    let network = if let Some(chain_id_str) = payment_payload.get("chainId").and_then(|v| v.as_str())
+    {
+        let chain_id: ChainId = chain_id_str.parse().map_err(|e| format!("invalid chainId: {e}"))?;
+        Network::try_from(&chain_id).map_err(|e| format!("unknown chainId: {e}"))?
+    } else if let Some(network_value) = payment_payload.get("network") {
+        serde_json::from_value(network_value.clone())
+            .map_err(|e| format!("invalid network: {e}"))?
+    } else {
+        return Err("missing chainId or network in paymentPayload".to_string());
+    };
+
+    // Build v1 payment payload
+    let mut v1_payload = payment_payload.clone();
+    v1_payload["x402Version"] = serde_json::json!(1);
+    v1_payload["network"] = serde_json::to_value(&network).map_err(|e| e.to_string())?;
+
+    // Extract payment_requirements
+    let payment_requirements = v2_json
+        .get("paymentRequirements")
+        .ok_or("missing paymentRequirements")?;
+
+    // Convert chainId to network in requirements if present
+    let req_network =
+        if let Some(chain_id_str) = payment_requirements.get("chainId").and_then(|v| v.as_str()) {
+            let chain_id: ChainId = chain_id_str
+                .parse()
+                .map_err(|e| format!("invalid chainId in requirements: {e}"))?;
+            Network::try_from(&chain_id).map_err(|e| format!("unknown chainId in requirements: {e}"))?
+        } else if let Some(network_value) = payment_requirements.get("network") {
+            serde_json::from_value(network_value.clone())
+                .map_err(|e| format!("invalid network in requirements: {e}"))?
+        } else {
+            return Err("missing chainId or network in paymentRequirements".to_string());
+        };
+
+    // Build v1 requirements - handle resource object conversion
+    let mut v1_requirements = payment_requirements.clone();
+    v1_requirements["network"] = serde_json::to_value(&req_network).map_err(|e| e.to_string())?;
+
+    // If resource is an object (v2 ResourceInfo), extract the URL and other fields
+    if let Some(resource) = payment_requirements.get("resource") {
+        if resource.is_object() {
+            if let Some(url) = resource.get("url") {
+                v1_requirements["resource"] = url.clone();
+            }
+            // Extract description and mimeType from resource if at top level they're missing
+            if !v1_requirements.get("description").is_some_and(|v| v.is_string()) {
+                if let Some(desc) = resource.get("description") {
+                    v1_requirements["description"] = desc.clone();
+                }
+            }
+            if !v1_requirements.get("mimeType").is_some_and(|v| v.is_string()) {
+                if let Some(mime) = resource.get("mimeType") {
+                    v1_requirements["mimeType"] = mime.clone();
+                }
+            }
+        }
+    }
+
+    // Build v1 request
+    let v1_json = serde_json::json!({
+        "x402Version": 1,
+        "paymentPayload": v1_payload,
+        "paymentRequirements": v1_requirements
+    });
+
+    serde_json::from_value(v1_json).map_err(|e| format!("failed to construct v1 request: {e}"))
+}
+
+/// Converts a v2 settle request JSON to a v1 SettleRequest.
+///
+/// Uses the same conversion logic as verify since SettleRequest = VerifyRequest.
+fn convert_v2_to_v1_settle(v2_json: &serde_json::Value) -> Result<SettleRequest, String> {
+    convert_v2_to_v1_verify(v2_json)
 }
 
 impl IntoResponse for FacilitatorLocalError {

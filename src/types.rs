@@ -86,7 +86,7 @@ impl<'de> Deserialize<'de> for X402Version {
 
 /// Enumerates payment schemes. Only "exact" is supported in this implementation,
 /// meaning the amount to be transferred must match exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scheme {
     Exact,
@@ -922,27 +922,58 @@ impl VerifyRequest {
 /// to be used for settlement.
 pub type SettleRequest = VerifyRequest;
 
-#[derive(Debug, Serialize, Deserialize, thiserror::Error)]
-#[serde(untagged, rename_all = "camelCase")]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum FacilitatorErrorReason {
     /// Payer doesn't have sufficient funds.
     #[error("insufficient_funds")]
-    #[serde(rename = "insufficient_funds")]
     InsufficientFunds,
     /// The scheme in PaymentPayload didn't match expected (e.g., not 'exact'), or settlement failed.
     #[error("invalid_scheme")]
-    #[serde(rename = "invalid_scheme")]
     InvalidScheme,
     /// Network in PaymentPayload didn't match a facilitator's expected network.
     #[error("invalid_network")]
-    #[serde(rename = "invalid_network")]
     InvalidNetwork,
     /// Unexpected settle error
     #[error("unexpected_settle_error")]
-    #[serde(rename = "unexpected_settle_error")]
     UnexpectedSettleError,
     #[error("{0}")]
     FreeForm(String),
+}
+
+impl Serialize for FacilitatorErrorReason {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // All variants serialize as strings
+        match self {
+            FacilitatorErrorReason::InsufficientFunds => {
+                serializer.serialize_str("insufficient_funds")
+            }
+            FacilitatorErrorReason::InvalidScheme => serializer.serialize_str("invalid_scheme"),
+            FacilitatorErrorReason::InvalidNetwork => serializer.serialize_str("invalid_network"),
+            FacilitatorErrorReason::UnexpectedSettleError => {
+                serializer.serialize_str("unexpected_settle_error")
+            }
+            FacilitatorErrorReason::FreeForm(s) => serializer.serialize_str(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FacilitatorErrorReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "insufficient_funds" => Ok(FacilitatorErrorReason::InsufficientFunds),
+            "invalid_scheme" => Ok(FacilitatorErrorReason::InvalidScheme),
+            "invalid_network" => Ok(FacilitatorErrorReason::InvalidNetwork),
+            "unexpected_settle_error" => Ok(FacilitatorErrorReason::UnexpectedSettleError),
+            _ => Ok(FacilitatorErrorReason::FreeForm(s)),
+        }
+    }
 }
 
 /// Returned from a facilitator after attempting to settle a payment on-chain.

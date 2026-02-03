@@ -34,20 +34,12 @@ impl TryFrom<Network> for SolanaChain {
     type Error = FacilitatorLocalError;
 
     fn try_from(value: Network) -> Result<Self, Self::Error> {
-        match value {
-            Network::Solana => Ok(Self { network: value }),
-            Network::SolanaDevnet => Ok(Self { network: value }),
-            Network::BaseSepolia => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::Base => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::XdcMainnet => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::AvalancheFuji => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::Avalanche => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::PolygonAmoy => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::Polygon => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::Sei => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::SeiTestnet => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::BscTestnet => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
-            Network::Bsc => Err(FacilitatorLocalError::UnsupportedNetwork(None)),
+        use crate::network::NetworkFamily;
+        match NetworkFamily::from(value) {
+            NetworkFamily::Solana => Ok(Self { network: value }),
+            NetworkFamily::Evm | NetworkFamily::Aptos => {
+                Err(FacilitatorLocalError::UnsupportedNetwork(None))
+            }
         }
     }
 }
