@@ -11,3 +11,4 @@ logs*
 .wrangler/
 tokens-custom.toml
 hooks-custom.toml
+config.json

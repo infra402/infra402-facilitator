@@ -1,81 +1,97 @@
-//! Extension traits and builders for ergonomic integration of [`X402Payments`] middleware
-//! into [`reqwest::Client`] or [`reqwest::ClientBuilder`] instances.
+//! Builder utilities for integrating x402 with reqwest.
 //!
-//! This allows code like:
-//!
-//! ```rust,ignore
-//! use reqwest::Client;
-//! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild};
-//! use alloy::signers::local::PrivateKeySigner;
-//!
-//! let signer: PrivateKeySigner = "...".parse().unwrap();
-//!
-//! let client: reqwest_middleware::ClientWithMiddleware = Client::new()
-//!     .with_payments(signer)
-//!     .prefer(...)
-//!     .max(...)
-//!     .build();
-//! ```
+//! This module provides traits and types for building reqwest clients
+//! with x402 payment middleware.
 
-use crate::chains::IntoSenderWallet;
-use crate::{MaxTokenAmount, X402Payments};
-use infra402_facilitator::types::TokenAsset;
 use reqwest::{Client, ClientBuilder};
 use reqwest_middleware as rqm;
-use reqwest_middleware::ClientWithMiddleware;
 
-/// Builder for attaching `X402Payments` middleware to a `reqwest` client or builder.
+use crate::client::X402Client;
+
+/// Trait for adding x402 payment handling to reqwest clients.
 ///
-/// This allows configuration of payment-related settings (like preferred tokens or max token amounts)
-/// before finalizing into a `ClientWithMiddleware`.
-pub struct ReqwestWithPaymentsBuilder<A> {
+/// This trait is implemented on [`Client`] and [`ClientBuilder`], allowing
+/// you to create a reqwest client with automatic x402 payment handling.
+///
+/// ## Example
+///
+/// ```rust,no_run
+/// use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, X402Client};
+/// use x402_chain_eip155::V1Eip155ExactClient;
+/// use alloy_signer_local::PrivateKeySigner;
+/// use std::sync::Arc;
+/// use reqwest::Client;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let signer = Arc::new("PRIVATE_KEY".parse::<PrivateKeySigner>().unwrap());
+/// let x402_client = X402Client::new()
+///     .register(V1Eip155ExactClient::new(signer));
+///
+/// let http_client = Client::new()
+///     .with_payments(x402_client)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+pub trait ReqwestWithPayments<A, S> {
+    /// Adds x402 payment middleware to the client or builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `x402_client` - The x402 client configured with scheme handlers
+    ///
+    /// # Returns
+    ///
+    /// A builder that can be used to build the final client.
+    fn with_payments(self, x402_client: X402Client<S>) -> ReqwestWithPaymentsBuilder<A, S>;
+}
+
+impl<S> ReqwestWithPayments<Client, S> for Client {
+    fn with_payments(self, x402_client: X402Client<S>) -> ReqwestWithPaymentsBuilder<Client, S> {
+        ReqwestWithPaymentsBuilder {
+            inner: self,
+            x402_client,
+        }
+    }
+}
+
+impl<S> ReqwestWithPayments<ClientBuilder, S> for ClientBuilder {
+    fn with_payments(
+        self,
+        x402_client: X402Client<S>,
+    ) -> ReqwestWithPaymentsBuilder<ClientBuilder, S> {
+        ReqwestWithPaymentsBuilder {
+            inner: self,
+            x402_client,
+        }
+    }
+}
+
+/// Builder for creating a reqwest client with x402 middleware.
+pub struct ReqwestWithPaymentsBuilder<A, S> {
     inner: A,
-    x402: X402Payments,
+    x402_client: X402Client<S>,
 }
 
-impl<A> ReqwestWithPaymentsBuilder<A> {
-    pub fn and_with_wallet<S: IntoSenderWallet>(self, wallet: S) -> Self {
-        Self {
-            inner: self.inner,
-            x402: self.x402.and_with_wallet(wallet),
-        }
-    }
-
-    /// Set the maximum amount allowed to be paid for a given token.
-    /// This is enforced before any request is retried with a payment header.
-    /// Mimics [`X402Payments::max`].
-    pub fn max(self, max: MaxTokenAmount) -> Self {
-        Self {
-            inner: self.inner,
-            x402: self.x402.max(max),
-        }
-    }
-
-    /// Extend the list of preferred tokens to use for payment,
-    /// prioritized during requirement selection.
-    /// Mimics [`X402Payments::prefer`].
-    pub fn prefer<T: Into<Vec<TokenAsset>>>(self, prefer: T) -> Self {
-        Self {
-            inner: self.inner,
-            x402: self.x402.prefer(prefer),
-        }
-    }
-}
-
-/// A trait implemented for both builder variants to finalize the HTTP client.
+/// Trait for building the final client from a [`ReqwestWithPaymentsBuilder`].
 pub trait ReqwestWithPaymentsBuild {
+    /// The type returned by [`build`]
     type BuildResult;
+    /// The type returned by [`builder`]
     type BuilderResult;
 
-    /// Finalize the middleware-enhanced client, producing a [`ClientWithMiddleware`].
+    /// Builds the client, consuming the builder.
     fn build(self) -> Self::BuildResult;
 
-    /// Produce a [`Self::BuildResult`] to further customize the reqwest http client.
+    /// Returns the underlying reqwest client builder with middleware added.
     fn builder(self) -> Self::BuilderResult;
 }
 
-impl ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<Client> {
-    type BuildResult = ClientWithMiddleware;
+impl<S> ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<Client, S>
+where
+    X402Client<S>: rqm::Middleware,
+{
+    type BuildResult = rqm::ClientWithMiddleware;
     type BuilderResult = rqm::ClientBuilder;
 
     fn build(self) -> Self::BuildResult {
@@ -83,12 +99,15 @@ impl ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<Client> {
     }
 
     fn builder(self) -> Self::BuilderResult {
-        rqm::ClientBuilder::new(self.inner).with(self.x402)
+        rqm::ClientBuilder::new(self.inner).with(self.x402_client)
     }
 }
 
-impl ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<ClientBuilder> {
-    type BuildResult = Result<ClientWithMiddleware, reqwest::Error>;
+impl<S> ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<ClientBuilder, S>
+where
+    X402Client<S>: rqm::Middleware,
+{
+    type BuildResult = Result<rqm::ClientWithMiddleware, reqwest::Error>;
     type BuilderResult = Result<rqm::ClientBuilder, reqwest::Error>;
 
     fn build(self) -> Self::BuildResult {
@@ -98,46 +117,6 @@ impl ReqwestWithPaymentsBuild for ReqwestWithPaymentsBuilder<ClientBuilder> {
 
     fn builder(self) -> Self::BuilderResult {
         let client = self.inner.build()?;
-        Ok(rqm::ClientBuilder::new(client).with(self.x402))
-    }
-}
-
-/// Extension trait that adds `.with_payments(...)` to [`reqwest::Client`] and [`reqwest::ClientBuilder`],
-/// returning a [`ReqwestWithPaymentsBuilder`] that can be further customized.
-pub trait ReqwestWithPayments {
-    type Inner;
-
-    /// Wraps the base client with an [`X402Payments`] middleware using the given signer.
-    fn with_payments<S: IntoSenderWallet>(
-        self,
-        wallet: S,
-    ) -> ReqwestWithPaymentsBuilder<Self::Inner>;
-}
-
-impl ReqwestWithPayments for Client {
-    type Inner = Client;
-
-    fn with_payments<S: IntoSenderWallet>(
-        self,
-        wallet: S,
-    ) -> ReqwestWithPaymentsBuilder<Self::Inner> {
-        ReqwestWithPaymentsBuilder {
-            inner: self,
-            x402: X402Payments::with_wallet(wallet),
-        }
-    }
-}
-
-impl ReqwestWithPayments for ClientBuilder {
-    type Inner = ClientBuilder;
-
-    fn with_payments<S: IntoSenderWallet>(
-        self,
-        wallet: S,
-    ) -> ReqwestWithPaymentsBuilder<Self::Inner> {
-        ReqwestWithPaymentsBuilder {
-            inner: self,
-            x402: X402Payments::with_wallet(wallet),
-        }
+        Ok(rqm::ClientBuilder::new(client).with(self.x402_client))
     }
 }

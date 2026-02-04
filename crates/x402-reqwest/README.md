@@ -3,24 +3,23 @@
 [![Crates.io](https://img.shields.io/crates/v/x402-reqwest.svg)](https://crates.io/crates/x402-reqwest)
 [![Docs.rs](https://docs.rs/x402-reqwest/badge.svg)](https://docs.rs/x402-reqwest)
 
-**Wrapper around [`reqwest`](https://crates.io/crates/reqwest) that transparently handles HTTP `402 Payment Required` responses using the [x402 protocol](https://x402.org/).**
+**Reqwest middleware that transparently handles HTTP `402 Payment Required` responses using the [x402 protocol](https://x402.org/).**
 
-This crate enables your [`reqwest`](https://crates.io/crates/reqwest) or [`reqwest-middleware`](https://crates.io/crates/reqwest-middleware)-based HTTP clients to:
+This crate enables your reqwest or reqwest-middleware-based HTTP clients to:
 - Detect `402 Payment Required` responses
-- Build and sign [x402](https://x402.org) payment payloads
-- Retry the request with the `X-Payment` header attached
-- Respect client-defined preferences like token priority and per-token payment caps
+- Extract payment requirements from the response
+- Sign payments using registered scheme clients
+- Retry the request with the payment header attached
 
 All in all: **automatically pay for resources using the x402 protocol**.
 
-Built with [`reqwest-middleware`](https://crates.io/crates/reqwest-middleware) and compatible with any [`alloy::Signer`](https://alloy.rs).
-
 ## Features
 
-- Pluggable [`reqwest`](https://crates.io/crates/reqwest) middleware
-- EIP-712-compatible signing with [`alloy`](https://alloy.rs)
-- Fluent builder-style configuration
-- Token preferences & per-asset payment limits
+- Pluggable reqwest middleware using [reqwest-middleware](https://crates.io/crates/reqwest-middleware)
+- Multi-chain support (EVM via EIP-155, Solana)
+- Full V1 and V2 protocol support with automatic detection and handling
+- Multi-scheme architecture supporting various payment schemes
+- Customizable payment selection logic
 - Tracing support (opt-in via `telemetry` feature)
 
 ## Installation
@@ -29,64 +28,147 @@ Add the dependency:
 
 ```toml
 # Cargo.toml
-x402-reqwest = "0.4"
+x402-reqwest = "0.6"
 ```
 
 To enable tracing:
 
 ```toml
-x402-reqwest = { version = "0.4", features = ["telemetry"] }
+x402-reqwest = { version = "0.6", features = ["telemetry"] }
 ```
 
-## 💡 Examples
+## Quickstart
 
-```rust
+```rust,no_run
+use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, X402Client};
+use x402_chain_eip155::V1Eip155ExactClient;
+use alloy_signer_local::PrivateKeySigner;
+use std::sync::Arc;
 use reqwest::Client;
-use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, MaxTokenAmountFromAmount};
-use alloy::signers::local::PrivateKeySigner;
-use x402_rs::network::{Network, USDCDeployment};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let signer: PrivateKeySigner = "0x...".parse()?; // never hardcode real keys!
+let signer: Arc<PrivateKeySigner> = Arc::new("0x...".parse().unwrap());
 
-    let client = Client::new()
-        .with_payments(signer)
-        .prefer(USDCDeployment::by_network(Network::Base))
-        .max(USDCDeployment::by_network(Network::Base).amount("1.00")?)
-        .build();
+// Create an X402 client and register scheme handlers
+let x402_client = X402Client::new()
+    .register(V1Eip155ExactClient::new(signer.clone()));
 
-    let res = client
-        .get("https://example.com/protected")
-        .send()
-        .await?;
+// Build a reqwest client with x402 middleware
+let http_client = Client::new()
+    .with_payments(x402_client)
+    .build();
 
-    println!("Status: {}", res.status());
-    Ok(())
-}
+// Use the client - payments are handled automatically
+let response = http_client
+    .get("https://api.example.com/protected")
+    .send()
+    .await?;
+
+println!("Status: {}", response.status());
 ```
 
-See more examples on [docs.rs](https://docs.rs/x402-reqwest)
+## Registering Scheme Clients
 
-## How it works
-1.	A 402 Payment Required is received from a server.
-2.	The middleware parses the Payment-Required response body.
-3.	A compatible payment requirement is selected, based on client preferences.
-4.	A signed payload is created (compatible with [EIP-3009](https://eips.ethereum.org/EIPS/eip-3009) `TransferWithAuthorization`).
-5.	The payload is base64-encoded into an `X-Payment` header.
-6.	The request is retried, now with the payment inside the header.
+The [`X402Client`] uses a plugin architecture for supporting different payment schemes.
+Register scheme clients for each chain/network you want to support:
+
+```rust,no_run
+use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, X402Client};
+use x402_chain_eip155::{V1Eip155ExactClient, V2Eip155ExactClient};
+use x402_chain_solana::{V1SolanaExactClient, V2SolanaExactClient};
+use alloy_signer_local::PrivateKeySigner;
+use solana_client::nonblocking::rpc_client::RpcClient;
+use solana_keypair::Keypair;
+use std::sync::Arc;
+use reqwest::Client;
+
+let evm_signer: Arc<PrivateKeySigner> = Arc::new("0x...".parse().unwrap());
+let solana_keypair = Arc::new(Keypair::from_base58_string("..."));
+let solana_rpc_client = Arc::new(RpcClient::new("https://api.devnet.solana.com"));
+
+let x402_client = X402Client::new()
+    // Register EVM schemes (V1 and V2)
+    .register(V1Eip155ExactClient::new(evm_signer.clone()))
+    .register(V2Eip155ExactClient::new(evm_signer))
+    // Register Solana schemes (V1 and V2)
+    .register(V1SolanaExactClient::new(
+        solana_keypair.clone(),
+        solana_rpc_client.clone(),
+    ))
+    .register(V2SolanaExactClient::new(solana_keypair, solana_rpc_client));
+
+let http_client = Client::new()
+    .with_payments(x402_client)
+    .build();
+```
+
+## How It Works
+
+1. A request is made to a server
+2. If a `402 Payment Required` response is received, the middleware:
+   - Parses the Payment-Required response (V1 body or V2 header)
+   - Finds registered scheme clients that can handle the payment
+   - Selects the best matching payment option
+   - Signs the payment using the scheme client
+   - Retries the request with the payment header attached
+
+## Payment Selection
+
+When multiple payment options are available, the [`X402Client`] uses a [`PaymentSelector`]
+to choose the best option. By default, it uses [`FirstMatch`] which selects the first
+matching scheme.
+
+You can implement custom selection logic:
+
+```rust,ignore
+use x402_reqwest::X402Client;
+use x402_types::scheme::client::{PaymentSelector, PaymentCandidate};
+
+struct MyCustomSelector;
+
+impl PaymentSelector for MyCustomSelector {
+    fn select(&self, candidates: &[PaymentCandidate]) -> Option<&PaymentCandidate> {
+        // Custom selection logic
+        candidates.first()
+    }
+}
+
+let client = X402Client::new()
+    .with_selector(MyCustomSelector);
+```
 
 ## Optional Features
-- `telemetry`: Enables tracing annotations for richer observability.
 
-Enable it via:
+- `telemetry`: Enables tracing annotations for richer observability
+- `json`: Enables JSON support for the reqwest-middleware, allowing `.json()` calls when making a HTTP request
+
+Enable them via:
 ```toml
-x402-reqwest = { version = "0.4", features = ["telemetry"] }
+x402-reqwest = { version = "0.6", features = ["telemetry", "json"] }
 ```
 
+## Telemetry
+
+When the `telemetry` feature is enabled, the middleware emits structured tracing events for key operations:
+
+- **x402.reqwest.handle**: Span covering the entire middleware handling, including 402 detection and payment retry
+- **x402.reqwest.next**: Span for the underlying HTTP request (both initial and retry)
+- **x402.reqwest.make_payment_headers**: Span for payment header creation and signing
+- **x402.reqwest.parse_payment_required**: Span for parsing 402 responses (V1 body or V2 header)
+
+The telemetry includes:
+- Payment version (V1 or V2)
+- Selected scheme and network
+- Request URLs and response status codes
+- Payment parsing results
+
+This integrates with any `tracing`-compatible subscriber. For OpenTelemetry export, see [x402-types telemetry](https://docs.rs/x402-types/latest/x402_types/util/telemetry/index.html).
+
 ## Related Crates
-- [x402-rs](https://crates.io/crates/x402-rs): Core x402 types, facilitator traits, helpers.
-- [x402-axum](https://crates.io/crates/x402-rs): Axum middleware for accepting x402 payments.
+
+- [x402-types](https://crates.io/crates/x402-types): Core x402 types, facilitator traits, helpers.
+- [x402-axum](https://crates.io/crates/x402-axum): Axum middleware for accepting x402 payments.
+- [x402-chain-eip155](https://crates.io/crates/x402-chain-eip155): EIP-155 chain support for x402.
+- [x402-chain-solana](https://crates.io/crates/x402-chain-solana): Solana chain support for x402.
 
 ## License
 
