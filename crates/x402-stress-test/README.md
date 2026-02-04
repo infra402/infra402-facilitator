@@ -129,6 +129,7 @@ Options:
   --settle-only                  Only test /settle endpoint
   --workers <N>                  Number of concurrent workers [default: 10]
   --stats-interval-seconds <N>   Print stats every N seconds [default: 1]
+  --protocol-version <N>         Protocol version (1 or 2) [default: 1]
 ```
 
 ## Usage Examples
@@ -195,6 +196,46 @@ cargo run --release -- \
   --total-requests 10000 \
   --workers 100
 ```
+
+## Protocol Versions (v1 vs v2)
+
+The stress test tool supports both x402 protocol versions:
+
+### v1 Protocol (Default)
+
+```bash
+cargo run --release -- --protocol-version 1 --total-requests 100
+```
+
+- Uses `network` field (e.g., `base-sepolia`, `bsc-testnet`)
+- Original x402 protocol format
+- Request body contains `"x402Version": 1`
+
+### v2 Protocol
+
+```bash
+cargo run --release -- --protocol-version 2 --total-requests 100
+```
+
+- Uses CAIP-2 `chainId` format (e.g., `eip155:84532` for Base Sepolia)
+- Enhanced protocol with `ResourceInfo` metadata object
+- Request body contains `"x402Version": 2`
+
+### How Version Detection Works
+
+Both protocol versions use the **same endpoints** (`POST /verify`, `POST /settle`). The server detects the protocol version from the `x402Version` field in the request body:
+
+- `"x402Version": 1` → Processed as v1
+- `"x402Version": 2` → Converted to v1 internally, then processed
+
+### When to Use Each Version
+
+| Version | Use Case |
+|---------|----------|
+| **v1** | Testing legacy clients, production compatibility |
+| **v2** | Testing new protocol features, CAIP-2 chain ID support |
+
+Both versions test the same underlying settlement logic - the difference is in the request format and how network/chain identification is expressed.
 
 ## Output and Statistics
 
