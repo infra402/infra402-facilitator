@@ -11,10 +11,10 @@ path = "src/main.rs"
 [dependencies]
 # X402 dependencies
 infra402-facilitator = { path = "../.." }
-x402-reqwest = { path = "../x402-reqwest" }
+x402-chain-eip155 = { path = "../chains/x402-chain-eip155", features = ["client"] }
 
 # Alloy for EVM types and signing
-alloy = { version = "1.1", features = ["signers"] }
+alloy = { version = "1.6", features = ["signers"] }
 
 # HTTP client
 reqwest = { version = "0.13", features = ["json"] }

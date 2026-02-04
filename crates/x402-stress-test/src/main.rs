@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod runner;
 mod stats;
+mod wallet;
 
 use anyhow::Result;
 use config::Config;

@@ -15,8 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use x402_reqwest::chains::evm::EvmSenderWallet;
-use x402_reqwest::chains::SenderWallet;
+use crate::wallet::EvmSenderWallet;
 
 pub struct StressTest {
     config: Config,

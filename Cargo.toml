@@ -34,7 +34,7 @@ x402-facilitator-local = { version = "1.0", path = "crates/x402-facilitator-loca
 x402-reqwest = { version = "1.0", path = "crates/x402-reqwest" }
 x402-types = { version = "1.0", path = "crates/x402-types" }
 
-alloy-primitives = { version = "1.4.1" } # To represent token amounts
+alloy-primitives = { version = "1.5.4" } # To represent token amounts
 async-trait = { version = "0.1" }
 axum = { version = "0.8" }
 dotenvy = { version = "0.15.7" }
@@ -46,13 +46,13 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 # Common dependencies
 thiserror = { version = "2.0" }
 tokio = { version = "1.49", features = ["sync", "rt-multi-thread"] }
-tokio-util = { version = "0.7.16", features = ["rt"] }
-tower = { version = "0.5" }
-tower-http = { version = "0.6.6", features = ["trace", "cors"] }
-tracing = { version = "0.1" }
-tracing-core = { version = "0.1.34" }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = { version = "2.5", features = ["serde"] }
+tokio-util = { version = "0.7.18", features = ["rt"] }
+tower = { version = "0.5.3" }
+tower-http = { version = "0.6.8", features = ["trace", "cors"] }
+tracing = { version = "0.1.44" }
+tracing-core = { version = "0.1.36" }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+url = { version = "2.5.8", features = ["serde"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # Patches for aptos-core dependencies
@@ -78,22 +78,22 @@ keywords = ["blockchain", "payments", "x402", "stablecoin", "http-402", "infrast
 categories = ["cryptography", "finance", "network-programming", "web-programming::http-server"]
 
 [dependencies]
-axum = { version = "0.8.6" }
+axum = { version = "0.8.8" }
 tokio = { version = "1.49", features = ["full"] }
-tokio-util = { version = "0.7.16", features = ["rt"] }
+tokio-util = { version = "0.7.18", features = ["rt"] }
 dotenvy = { version = "0.15.7" }
-serde_json = { version = "1.0.143" }
-tower-http = { version = "0.6.6", features = ["trace", "cors", "limit"] }
-tower = { version = "0.5.2" }
-serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.149" }
+tower-http = { version = "0.6.8", features = ["trace", "cors", "limit"] }
+tower = { version = "0.5.3" }
+serde = { version = "1.0.228", features = ["derive"] }
 once_cell = { version = "1.21.3" }
-regex = { version = "1.11.1" }
-url = { version = "2.5.4", features = ["serde"] }
-alloy = { version = "1.1", features = ["dyn-abi"] }
-thiserror = { version = "2.0.12" }
+regex = { version = "1.12.3" }
+url = { version = "2.5.8", features = ["serde"] }
+alloy = { version = "1.6.1", features = ["dyn-abi"] }
+thiserror = { version = "2.0.18" }
 base64 = { version = "0.22.1" }
-rust_decimal = { version = "1.37.1" }
-async-trait = { version = "0.1.88" }
+rust_decimal = { version = "1.40.0" }
+async-trait = { version = "0.1.89" }
 dashmap = { version = "6.1.0" }
 ipnetwork = { version = "0.20.0" }
 config = { version = "0.14.1", default-features = false, features = ["toml"] }
@@ -104,22 +104,22 @@ solana-commitment-config = { version = "2.2.1" } # Older version due to compatib
 bincode = { version = "1.3.3" } # Older version due to compatibility with solana-sdk
 spl-token = { version = "8.0.0" }
 spl-token-2022 = { version = "9.0.0" }
-solana-client = { version = "2.3.7" }
+solana-client = { version = "2.3.13" }
 
 # Tracing and OpenTelemetry
-tracing = { version = "0.1.41" }
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+tracing = { version = "0.1.44" }
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 opentelemetry = { version = "0.30.0" }
 opentelemetry_sdk = { version = "0.30.0" }
 opentelemetry-semantic-conventions = { version = "0.30.0", features = ["semconv_experimental"] }
-tracing-core = { version = "0.1.34" }
+tracing-core = { version = "0.1.36" }
 tracing-opentelemetry = { version = "0.31.0" }
 opentelemetry-otlp = { version = "0.30.0", features = ["metrics", "grpc-tonic"] }
 opentelemetry-stdout = { version = "0.30.0", features = ["trace", "metrics"] }
-toml = "0.8.2"
+toml = "0.8.23"
 
 [dev-dependencies]
-toml = "0.8.2"
+toml = "0.8.23"
 
 [features]
 telemetry = []
