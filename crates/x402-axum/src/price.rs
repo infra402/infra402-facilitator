@@ -88,13 +88,14 @@ where
 ///
 /// All methods clone the asset, so the trait is intended for ergonomic one-liners like:
 ///
-/// ```rust
+/// ```rust,ignore
 /// use x402_axum::price::IntoPriceTag;
 /// use x402_rs::network::{Network, USDCDeployment};
+/// use alloy::primitives::address;
 ///
 /// let price_tag = USDCDeployment::by_network(Network::Base)
 ///     .amount("1.50")
-///     .pay_to("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+///     .pay_to(address!("0x036CbD53842c5426634e7929541eC2318f3dCF7e"))
 ///     .build()
 ///     .unwrap();
 /// ```

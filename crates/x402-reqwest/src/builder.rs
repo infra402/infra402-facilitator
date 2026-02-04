@@ -3,7 +3,7 @@
 //!
 //! This allows code like:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use reqwest::Client;
 //! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild};
 //! use alloy::signers::local::PrivateKeySigner;

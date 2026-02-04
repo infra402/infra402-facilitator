@@ -20,13 +20,13 @@
 //! You can also enforce safety limits with `.max(...)` to ensure that the client never
 //! spends more than a configured amount per token. This helps prevent overpayment or abuse.
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use alloy::signers::local::PrivateKeySigner;
 //! use x402_reqwest::{MaxTokenAmountFromAmount, X402Payments};
 //! use infra402_facilitator::network::{Network, USDCDeployment};
 //!
 //! let signer: PrivateKeySigner = "0x...".parse()?;
-//! X402Payments::with_signer(signer)
+//! X402Payments::with_wallet(signer)
 //!     // Example: prefer USDC on Base, and limit payments to 1.00 USDC
 //!     .prefer(USDCDeployment::by_network(Network::Base))
 //!     .max(USDCDeployment::by_network(Network::Base).amount("1.00")?)
@@ -35,7 +35,7 @@
 //! ## Examples
 //!
 //! ### Using [`reqwest::ClientBuilder`]
-//! ```rust,no_run
+//! ```rust,ignore
 //! use reqwest::ClientBuilder;
 //! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, MaxTokenAmountFromAmount};
 //! use alloy::signers::local::PrivateKeySigner;
@@ -60,7 +60,7 @@
 //! ```
 //!
 //! ### Using [`reqwest::Client`]
-//! ```rust,no_run
+//! ```rust,ignore
 //! use reqwest::Client;
 //! use x402_reqwest::{ReqwestWithPayments, ReqwestWithPaymentsBuild, MaxTokenAmountFromAmount};
 //! use alloy::signers::local::PrivateKeySigner;
@@ -85,7 +85,7 @@
 //! ```
 //!
 //! ### Advanced: using [`reqwest_middleware::ClientBuilder`]
-//! ```rust,no_run
+//! ```rust,ignore
 //! use alloy::signers::local::PrivateKeySigner;
 //! use reqwest::Client;
 //! use reqwest_middleware as rqm;
@@ -97,7 +97,7 @@
 //!     let signer: PrivateKeySigner = "0x...".parse()?;
 //!     let client = rqm::ClientBuilder::new(Client::new())
 //!         .with(
-//!             X402Payments::with_signer(signer)
+//!             X402Payments::with_wallet(signer)
 //!                 .prefer(USDCDeployment::by_network(Network::BaseSepolia))
 //!                 .max(USDCDeployment::by_network(Network::BaseSepolia).amount(0.1)?),
 //!         )

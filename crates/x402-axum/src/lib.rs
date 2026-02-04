@@ -5,17 +5,19 @@
 //!
 //! ## Quickstart
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use axum::{Router, routing::get, Json};
 //! use axum::response::IntoResponse;
 //! use http::StatusCode;
 //! use serde_json::json;
 //! use x402_axum::{X402Middleware, IntoPriceTag};
 //! use x402_rs::network::{Network, USDCDeployment};
+//! use alloy::primitives::address;
 //!
 //! let x402 = X402Middleware::try_from("https://facilitator.example.com/").unwrap();
 //! // You can construct `TokenAsset` manually. Here we use known USDC on Base Sepolia
-//! let usdc = USDCDeployment::by_network(Network::BaseSepolia).pay_to("0xADDRESS");
+//! let usdc = USDCDeployment::by_network(Network::BaseSepolia)
+//!     .pay_to(address!("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
 //!
 //! let app: Router = Router::new().route(
 //!     "/paywall",

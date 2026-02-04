@@ -8,8 +8,8 @@ publish = false
 x402-rs = { version = "0.9" }
 x402-axum = { version = "0.6", features = ["telemetry"] }
 
-axum = { version = "0.8.4" }
-tokio = { version = "1.45.0" }
+axum = { version = "0.8" }
+tokio = { version = "1.49" }
 dotenvy = { version = "0.15.7" }
 serde_json = { version = "1.0" }
 

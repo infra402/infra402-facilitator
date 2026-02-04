@@ -7,7 +7,7 @@
 //!
 //! ## Example Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use axum::{Router, routing::get, Json};
 //! use axum::response::IntoResponse;
 //! use http::StatusCode;
@@ -15,10 +15,11 @@
 //! use x402_rs::network::{Network, USDCDeployment};
 //! use x402_axum::layer::X402Middleware;
 //! use x402_axum::price::IntoPriceTag;
+//! use alloy::primitives::address;
 //!
 //! let x402 = X402Middleware::try_from("https://facilitator.ukstv.me/").unwrap();
 //! let usdc = USDCDeployment::by_network(Network::BaseSepolia)
-//!     .pay_to("0xADDRESS");
+//!     .pay_to(address!("0x036CbD53842c5426634e7929541eC2318f3dCF7e"));
 //!
 //! let app: Router = Router::new().route(
 //!     "/protected",
@@ -311,10 +312,11 @@ where
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use x402_axum::X402Middleware;
     /// use x402_rs::network::{Network, USDCDeployment};
     /// use x402_axum::IntoPriceTag;
+    /// use alloy::primitives::address;
     ///
     /// let x402 = X402Middleware::try_from("https://facilitator.example.com/")
     ///     .unwrap()
@@ -322,7 +324,7 @@ where
     ///     .with_price_tag(
     ///         USDCDeployment::by_network(Network::BaseSepolia)
     ///             .amount("0.01")
-    ///             .pay_to("0xADDRESS")
+    ///             .pay_to(address!("0x036CbD53842c5426634e7929541eC2318f3dCF7e"))
     ///             .unwrap()
     ///     );
     /// ```
