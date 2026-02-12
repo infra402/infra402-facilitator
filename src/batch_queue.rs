@@ -53,7 +53,6 @@ impl BatchQueueManager {
         network_provider: &Arc<crate::chain::NetworkProvider>,
         request: SettleRequest,
     ) -> oneshot::Receiver<Result<SettleResponse, FacilitatorLocalError>> {
-        // Capture key for cleanup after process_loop exits
         let key = (facilitator_addr, network);
 
         // Get or create queue for this (facilitator, network) pair
@@ -96,11 +95,8 @@ impl BatchQueueManager {
             Ordering::SeqCst,
             Ordering::SeqCst,
         ).is_ok() {
-            // We successfully set the flag from false to true, so we spawn the task
             let queue_for_loop = Arc::clone(&queue);
-            let queue_for_cleanup = Arc::clone(&queue);
             let provider_clone = Arc::clone(network_provider);
-            let queues_map = Arc::clone(&self.queues);
             let network_config = self.config.for_network(&network.to_string());
             let allow_partial_failure = network_config.allow_partial_failure;
 
@@ -112,17 +108,7 @@ impl BatchQueueManager {
 
             tokio::spawn(async move {
                 queue_for_loop.process_loop(provider_clone, allow_partial_failure).await;
-
-                // Clear the task_running flag
-                queue_for_cleanup.task_running.store(false, Ordering::SeqCst);
-
-                // CLEANUP: Remove from DashMap when task exits to release provider Arc
-                queues_map.remove(&key);
-                tracing::info!(
-                    facilitator = %key.0,
-                    network = %key.1,
-                    "removed queue entry from DashMap after process_loop exit"
-                );
+                // process_loop sets task_running=false atomically before exiting
             });
         }
 
@@ -208,9 +194,9 @@ impl BatchQueue {
 
     /// Run the batch processing loop for this queue.
     ///
-    /// Waits for max_wait_ms, then flushes any pending requests and exits.
-    /// This ensures the provider Arc is only held during active batch processing.
-    /// A new task will be spawned by the next enqueue() call if needed.
+    /// Continuously flushes batches every max_wait_ms. Exits only when the
+    /// queue is empty, atomically clearing task_running under the pending lock
+    /// to prevent the race where enqueue() adds a request but skips spawning.
     pub async fn process_loop(
         self: Arc<Self>,
         network_provider: Arc<crate::chain::NetworkProvider>,
@@ -225,26 +211,43 @@ impl BatchQueue {
             "batch processor task started"
         );
 
-        // Wait for max_wait_ms to allow requests to accumulate
         let mut ticker = interval(Duration::from_millis(self.max_wait_ms));
         ticker.tick().await; // First tick completes immediately
-        ticker.tick().await; // Second tick waits for max_wait_ms
 
-        // Flush whatever we have accumulated
-        if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
-            tracing::error!(
-                facilitator = %self.facilitator_addr,
-                network = %self.network,
-                error = ?e,
-                "failed to flush batch"
-            );
+        loop {
+            ticker.tick().await; // Wait for max_wait_ms
+
+            if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
+                tracing::error!(
+                    facilitator = %self.facilitator_addr,
+                    network = %self.network,
+                    error = ?e,
+                    "failed to flush batch"
+                );
+            }
+
+            // Atomically check if queue is empty and mark task as not running.
+            // Holding the pending lock while setting task_running=false prevents
+            // the race where enqueue() pushes a request but skips spawning a task.
+            let should_exit = {
+                let pending = self.pending.lock().await;
+                if pending.is_empty() {
+                    self.task_running.store(false, Ordering::SeqCst);
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_exit {
+                tracing::debug!(
+                    facilitator = %self.facilitator_addr,
+                    network = %self.network,
+                    "batch processor task exiting — queue idle"
+                );
+                break;
+            }
         }
-
-        tracing::debug!(
-            facilitator = %self.facilitator_addr,
-            network = %self.network,
-            "batch processor task exiting - provider Arc will be dropped"
-        );
     }
 
     /// Flush the current batch of pending requests.
