@@ -197,6 +197,11 @@ pub struct ChainConfig {
     /// If not set, uses the global transaction.gas_buffer.
     #[serde(default)]
     pub gas_buffer: Option<f64>,
+    /// Use `BlockId::latest()` instead of `BlockId::pending()` for gas estimation.
+    /// Enable for chains with sub-200ms block production (e.g., Base Flashblocks)
+    /// where the "pending" block state is unreliable.
+    #[serde(default)]
+    pub flashblocks: bool,
 }
 
 impl ChainConfig {
@@ -660,5 +665,32 @@ enabled = false
 "#;
         let config4: FacilitatorConfig = toml::from_str(config4_str).unwrap();
         assert!(!config4.batch_settlement.is_enabled_anywhere());
+    }
+
+    #[test]
+    fn test_flashblocks_defaults_to_false() {
+        let config_str = r#"
+[transaction.chains.base]
+block_time_seconds = 2
+receipt_timeout_blocks = 30
+rpc_request_timeout_seconds = 20
+"#;
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+        let base = config.transaction.chains.get("base").unwrap();
+        assert!(!base.flashblocks);
+    }
+
+    #[test]
+    fn test_flashblocks_parses_true() {
+        let config_str = r#"
+[transaction.chains.base]
+block_time_seconds = 2
+receipt_timeout_blocks = 30
+rpc_request_timeout_seconds = 20
+flashblocks = true
+"#;
+        let config: FacilitatorConfig = toml::from_str(config_str).unwrap();
+        let base = config.transaction.chains.get("base").unwrap();
+        assert!(base.flashblocks);
     }
 }

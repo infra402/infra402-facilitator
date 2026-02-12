@@ -146,6 +146,7 @@ gas_buffer = 1.2  # More buffer for inaccurate multicall3 estimations
 block_time_seconds = 2
 receipt_timeout_blocks = 30  # 60 seconds total (30 blocks * 2s)
 rpc_request_timeout_seconds = 20
+flashblocks = true  # Use BlockId::latest() for gas estimation (Base Flashblocks)
 
 # Base Sepolia Testnet - Chain ID 84532
 [transaction.chains.base-sepolia]
