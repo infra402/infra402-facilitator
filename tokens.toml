@@ -36,6 +36,16 @@ eip712_version = "1"
 abi_file = "abi/XBNB.json"  # Path to ABI file (must use XBNB-specific ABI)
 signature_format = "separate_vrs"  # XBNB uses separate v, r, s components
 
+# x402 USDT (xUSDT) - Wrapped USDT for BSC networks
+[tokens.definitions.xusdt]
+symbol = "xUSDT"
+name = "x402 USDT"
+decimals = 18
+eip712_name = "x402 USDT"
+eip712_version = "1"
+abi_file = "abi/XUSDT.json"  # Path to ABI file (must use XUSDT-specific ABI)
+signature_format = "separate_vrs"  # xUSDT uses separate v, r, s components
+
 # ============================================================================
 # Production Token Deployments (hardcoded addresses)
 # ============================================================================
@@ -83,6 +93,7 @@ xbnb = "0x1E11fF9f392dAAbFB8823F210624194298FCF3E2"
 # BSC Mainnet
 [tokens.networks.bsc]
 xbnb = "0x1E11fF9f392dAAbFB8823F210624194298FCF3E2"
+xusdt = "0x0498e6a92d02c51f751c2550e41158c317f41637"
 
 # Solana Mainnet (Note: Non-EVM, included for completeness)
 [tokens.networks.solana]

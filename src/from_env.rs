@@ -3,7 +3,7 @@ use alloy::network::EthereumWallet;
 use alloy::signers::local::PrivateKeySigner;
 use serde::Deserialize;
 use serde::Serialize;
-use solana_sdk::signature::Keypair;
+use solana_keypair::Keypair;
 use std::env;
 use std::str::FromStr;
 

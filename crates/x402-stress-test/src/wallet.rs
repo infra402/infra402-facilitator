@@ -83,7 +83,7 @@ impl EvmSenderWallet {
         let authorization = ExactEvmPayloadAuthorization {
             from: EvmAddress::from(upstream_payload.authorization.from),
             to: EvmAddress::from(upstream_payload.authorization.to),
-            value: TokenAmount(upstream_payload.authorization.value),
+            value: TokenAmount(upstream_payload.authorization.value.into()),
             valid_after: UnixTimestamp(upstream_payload.authorization.valid_after.as_secs()),
             valid_before: UnixTimestamp(upstream_payload.authorization.valid_before.as_secs()),
             nonce: HexEncodedNonce(upstream_payload.authorization.nonce.0),
