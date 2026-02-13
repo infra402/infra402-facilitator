@@ -24,7 +24,7 @@ async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
 
 base64 = { version = "0.22.1" }
-rust_decimal = { version = "1.39.0" }
+rust_decimal = { version = "1.40" }
 regex = { version = "1.12.2" }
 serde_with = { version = "3.16.1" }
 

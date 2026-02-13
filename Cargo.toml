@@ -34,7 +34,7 @@ x402-facilitator-local = { version = "1.0", path = "crates/x402-facilitator-loca
 x402-reqwest = { version = "1.0", path = "crates/x402-reqwest" }
 x402-types = { version = "1.0", path = "crates/x402-types" }
 
-alloy-primitives = { version = "1.5.4" } # To represent token amounts
+alloy-primitives = { version = "1.5" } # To represent token amounts
 async-trait = { version = "0.1" }
 axum = { version = "0.8" }
 dotenvy = { version = "0.15.7" }
@@ -95,8 +95,8 @@ base64 = { version = "0.22.1" }
 rust_decimal = { version = "1.40.0" }
 async-trait = { version = "0.1.89" }
 dashmap = { version = "6.1.0" }
-ipnetwork = { version = "0.20.0" }
-config = { version = "0.14.1", default-features = false, features = ["toml"] }
+ipnetwork = { version = "0.21" }
+config = { version = "0.15", default-features = false, features = ["toml"] }
 
 # Solana
 solana-sdk = { version = "2.3.1", features = ["full"] }
@@ -109,17 +109,17 @@ solana-client = { version = "2.3.13" }
 # Tracing and OpenTelemetry
 tracing = { version = "0.1.44" }
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
-opentelemetry = { version = "0.30.0" }
-opentelemetry_sdk = { version = "0.30.0" }
-opentelemetry-semantic-conventions = { version = "0.30.0", features = ["semconv_experimental"] }
+opentelemetry = { version = "0.31" }
+opentelemetry_sdk = { version = "0.31" }
+opentelemetry-semantic-conventions = { version = "0.31", features = ["semconv_experimental"] }
 tracing-core = { version = "0.1.36" }
-tracing-opentelemetry = { version = "0.31.0" }
-opentelemetry-otlp = { version = "0.30.0", features = ["metrics", "grpc-tonic"] }
-opentelemetry-stdout = { version = "0.30.0", features = ["trace", "metrics"] }
-toml = "0.8.23"
+tracing-opentelemetry = { version = "0.32" }
+opentelemetry-otlp = { version = "0.31", features = ["metrics", "grpc-tonic"] }
+opentelemetry-stdout = { version = "0.31", features = ["trace", "metrics"] }
+toml = "1.0"
 
 [dev-dependencies]
-toml = "0.8.23"
+toml = "1.0"
 
 [features]
 telemetry = []

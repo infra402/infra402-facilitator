@@ -31,10 +31,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.143"
 
 # Progress and terminal UI
-indicatif = { version = "0.17", features = ["tokio"] }
+indicatif = { version = "0.18", features = ["tokio"] }
 
 # Utilities
-rand = "0.9"
+rand = "0.10"
 anyhow = "1.0"
 chrono = "0.4"
 
