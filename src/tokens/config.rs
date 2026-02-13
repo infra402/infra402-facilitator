@@ -117,10 +117,7 @@ impl TokenConfig {
             match Self::load_custom_tokens(&custom_path) {
                 Ok(custom_config) => {
                     Self::merge_custom_tokens(&mut config.tokens, custom_config)?;
-                    tracing::info!(
-                        custom_file = custom_path,
-                        "Loaded and merged custom tokens"
-                    );
+                    tracing::info!(custom_file = custom_path, "Loaded and merged custom tokens");
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -201,14 +198,20 @@ impl TokenConfig {
 
         // Merge custom network tokens with conflict detection
         for (network_name, custom_network) in custom.tokens.networks {
-            let network_tokens = main.networks.entry(network_name.clone()).or_insert_with(|| NetworkTokens {
-                tokens: HashMap::new(),
-            });
+            let network_tokens = main
+                .networks
+                .entry(network_name.clone())
+                .or_insert_with(|| NetworkTokens {
+                    tokens: HashMap::new(),
+                });
 
             for (token_name, address_str) in custom_network.tokens {
                 // Validate address format
                 let addr = Address::from_str(&address_str).map_err(|e| {
-                    format!("Invalid address '{}' for custom token '{}': {}", address_str, token_name, e)
+                    format!(
+                        "Invalid address '{}' for custom token '{}': {}",
+                        address_str, token_name, e
+                    )
                 })?;
 
                 // Check for address conflict with production tokens
@@ -510,7 +513,11 @@ abi_file = "abi/USDC.json"
 signature_format = "packed_bytes"
 "#;
 
-        std::fs::write("/tmp/tokens_test_dir/custom/tokens-custom.toml", custom_toml).unwrap();
+        std::fs::write(
+            "/tmp/tokens_test_dir/custom/tokens-custom.toml",
+            custom_toml,
+        )
+        .unwrap();
 
         // Should resolve relative path correctly
         let config = TokenConfig::from_file(main_path).unwrap();

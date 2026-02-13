@@ -3,7 +3,7 @@
 //! This module handles processing batches of settlement requests using Multicall3
 //! to bundle multiple transferWithAuthorization calls into single transactions.
 
-use crate::chain::{evm::EvmProvider, FacilitatorLocalError, NetworkProvider};
+use crate::chain::{FacilitatorLocalError, NetworkProvider, evm::EvmProvider};
 use crate::types::{SettleRequest, SettleResponse};
 use alloy::primitives::Address;
 use std::sync::Arc;
@@ -26,7 +26,10 @@ impl BatchProcessor {
     pub async fn process_batch(
         network_provider: &NetworkProvider,
         facilitator_addr: Address,
-        requests: Vec<(SettleRequest, oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>)>,
+        requests: Vec<(
+            SettleRequest,
+            oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>,
+        )>,
         allow_partial_failure: bool,
         hook_manager: Option<&Arc<crate::hooks::HookManager>>,
     ) -> Result<(), FacilitatorLocalError> {
@@ -44,7 +47,14 @@ impl BatchProcessor {
         // Match on network provider type
         match network_provider {
             NetworkProvider::Evm(evm_provider) => {
-                Self::process_evm_batch(evm_provider, facilitator_addr, requests, allow_partial_failure, hook_manager).await
+                Self::process_evm_batch(
+                    evm_provider,
+                    facilitator_addr,
+                    requests,
+                    allow_partial_failure,
+                    hook_manager,
+                )
+                .await
             }
             NetworkProvider::Solana(_solana_provider) => {
                 // Solana batching not implemented yet - process individually
@@ -72,7 +82,10 @@ impl BatchProcessor {
     async fn process_evm_batch(
         evm_provider: &EvmProvider,
         facilitator_addr: Address,
-        requests: Vec<(SettleRequest, oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>)>,
+        requests: Vec<(
+            SettleRequest,
+            oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>,
+        )>,
         allow_partial_failure: bool,
         hook_manager: Option<&Arc<crate::hooks::HookManager>>,
     ) -> Result<(), FacilitatorLocalError> {
@@ -88,7 +101,10 @@ impl BatchProcessor {
         let mut response_channels = Vec::with_capacity(requests.len());
 
         for (request, response_tx) in requests {
-            match evm_provider.validate_and_prepare_settlement(&request, hook_manager).await {
+            match evm_provider
+                .validate_and_prepare_settlement(&request, hook_manager)
+                .await
+            {
                 Ok(validated) => {
                     validated_settlements.push(validated);
                     response_channels.push(response_tx);
@@ -125,11 +141,15 @@ impl BatchProcessor {
         let mut current_batch_channels = Vec::new();
         let mut current_call3_count = 0;
 
-        for (settlement, channel) in validated_settlements.into_iter().zip(response_channels.into_iter()) {
+        for (settlement, channel) in validated_settlements
+            .into_iter()
+            .zip(response_channels.into_iter())
+        {
             let calls_needed = 1 + settlement.hooks.len(); // 1 for transfer + N for hooks
 
             // If adding this settlement would exceed limit, flush current batch
-            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty() {
+            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty()
+            {
                 sub_batches.push((current_batch, current_batch_channels));
                 current_batch = Vec::new();
                 current_batch_channels = Vec::new();
@@ -157,7 +177,10 @@ impl BatchProcessor {
         for (batch_settlements, batch_channels) in sub_batches {
             tracing::info!(
                 batch_size = batch_settlements.len(),
-                total_call3s = batch_settlements.iter().map(|s| 1 + s.hooks.len()).sum::<usize>(),
+                total_call3s = batch_settlements
+                    .iter()
+                    .map(|s| 1 + s.hooks.len())
+                    .sum::<usize>(),
                 "processing sub-batch"
             );
 
@@ -171,7 +194,9 @@ impl BatchProcessor {
             match batch_result {
                 Ok(responses) => {
                     // Send each response back to its requester
-                    for (response, response_tx) in responses.into_iter().zip(batch_channels.into_iter()) {
+                    for (response, response_tx) in
+                        responses.into_iter().zip(batch_channels.into_iter())
+                    {
                         let _ = response_tx.send(Ok(response));
                     }
                 }
@@ -180,7 +205,7 @@ impl BatchProcessor {
                     // Send error to all requesters in this sub-batch
                     for response_tx in batch_channels {
                         let batch_error = FacilitatorLocalError::ContractCall(
-                            "Batch settlement failed".to_string()
+                            "Batch settlement failed".to_string(),
                         );
                         let _ = response_tx.send(Err(batch_error));
                     }
@@ -196,7 +221,10 @@ impl BatchProcessor {
     /// Fallback: process settlements individually (used for Solana or when batching fails).
     async fn process_individually_fallback(
         network_provider: &NetworkProvider,
-        requests: Vec<(SettleRequest, oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>)>,
+        requests: Vec<(
+            SettleRequest,
+            oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>,
+        )>,
     ) -> Result<(), FacilitatorLocalError> {
         for (request, response_tx) in requests {
             // Use the existing settle method from NetworkProvider's Facilitator trait
@@ -211,14 +239,14 @@ impl BatchProcessor {
 #[cfg(test)]
 mod tests {
     use crate::chain::evm::ValidatedSettlement;
-    use alloy::primitives::{address, Bytes, FixedBytes, U256};
+    use alloy::primitives::{Bytes, FixedBytes, U256, address};
 
     // Test helper to create a minimal ValidatedSettlement for testing batch splitting logic
     fn create_test_validated_settlement(hooks_count: usize) -> ValidatedSettlement {
+        use crate::chain::evm::SettlementMetadata;
         use crate::hooks::HookCall;
         use crate::network::Network;
         use crate::types::MixedAddress;
-        use crate::chain::evm::SettlementMetadata;
 
         let hooks: Vec<HookCall> = (0..hooks_count)
             .map(|_| HookCall {
@@ -270,7 +298,8 @@ mod tests {
             let calls_needed = 1 + settlement.hooks.len(); // 1 for transfer + N for hooks = 4 per settlement
 
             // If adding this settlement would exceed limit, flush current batch
-            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty() {
+            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty()
+            {
                 sub_batches.push(current_batch);
                 current_batch = Vec::new();
                 current_call3_count = 0;
@@ -289,10 +318,18 @@ mod tests {
         assert_eq!(sub_batches.len(), 2, "Should split into 2 sub-batches");
 
         // First batch: 150 / 4 = 37 settlements (148 Call3s)
-        assert_eq!(sub_batches[0].len(), 37, "First batch should have 37 settlements");
+        assert_eq!(
+            sub_batches[0].len(),
+            37,
+            "First batch should have 37 settlements"
+        );
 
         // Second batch: remaining 13 settlements (52 Call3s)
-        assert_eq!(sub_batches[1].len(), 13, "Second batch should have 13 settlements");
+        assert_eq!(
+            sub_batches[1].len(),
+            13,
+            "Second batch should have 13 settlements"
+        );
     }
 
     #[tokio::test]
@@ -326,7 +363,10 @@ mod tests {
         let calls_with_hooks = 1 + settlement_with_hooks.hooks.len();
 
         assert_eq!(calls_no_hooks, 1, "Settlement with no hooks needs 1 Call3");
-        assert_eq!(calls_with_hooks, 6, "Settlement with 5 hooks needs 6 Call3s");
+        assert_eq!(
+            calls_with_hooks, 6,
+            "Settlement with 5 hooks needs 6 Call3s"
+        );
     }
 
     #[tokio::test]
@@ -345,7 +385,8 @@ mod tests {
         for settlement in settlements {
             let calls_needed = 1 + settlement.hooks.len();
 
-            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty() {
+            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty()
+            {
                 sub_batches.push(current_batch);
                 current_batch = Vec::new();
                 current_call3_count = 0;
@@ -374,7 +415,7 @@ mod tests {
             create_test_validated_settlement(30), // 31 Call3s
             create_test_validated_settlement(50), // 51 Call3s
             create_test_validated_settlement(40), // 41 Call3s
-            // Total: 155 Call3s
+                                                  // Total: 155 Call3s
         ];
 
         const MAX_CALL3_PER_BATCH: usize = 150;
@@ -386,7 +427,8 @@ mod tests {
         for settlement in settlements {
             let calls_needed = 1 + settlement.hooks.len();
 
-            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty() {
+            if current_call3_count + calls_needed > MAX_CALL3_PER_BATCH && !current_batch.is_empty()
+            {
                 sub_batches.push(current_batch);
                 current_batch = Vec::new();
                 current_call3_count = 0;
@@ -403,7 +445,15 @@ mod tests {
         // First 4 settlements: 11 + 21 + 31 + 51 = 114 Call3s (fits in one batch)
         // Adding 5th would be 114 + 41 = 155 > 150, so split
         assert_eq!(sub_batches.len(), 2);
-        assert_eq!(sub_batches[0].len(), 4, "First batch should have 4 settlements");
-        assert_eq!(sub_batches[1].len(), 1, "Second batch should have 1 settlement");
+        assert_eq!(
+            sub_batches[0].len(),
+            4,
+            "First batch should have 4 settlements"
+        );
+        assert_eq!(
+            sub_batches[1].len(),
+            1,
+            "Second batch should have 1 settlement"
+        );
     }
 }

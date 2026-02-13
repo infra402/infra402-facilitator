@@ -22,11 +22,7 @@ pub struct RuntimeContext {
 
 impl RuntimeContext {
     /// Create a new runtime context with the given values
-    pub fn new(
-        timestamp: U256,
-        block_number: U256,
-        sender: Address,
-    ) -> Self {
+    pub fn new(timestamp: U256, block_number: U256, sender: Address) -> Self {
         Self {
             timestamp,
             block_number,
@@ -37,10 +33,7 @@ impl RuntimeContext {
     }
 
     /// Create a runtime context by fetching current block info from provider
-    pub async fn from_provider<P>(
-        provider: &P,
-        sender: Address,
-    ) -> Result<Self, String>
+    pub async fn from_provider<P>(provider: &P, sender: Address) -> Result<Self, String>
     where
         P: Provider,
     {
@@ -90,7 +83,8 @@ mod tests {
             U256::from(1234567890),
             U256::from(100),
             address!("0x1111111111111111111111111111111111111111"),
-        ).with_batch_info(5, 10);
+        )
+        .with_batch_info(5, 10);
 
         assert_eq!(ctx.batch_index, Some(5));
         assert_eq!(ctx.batch_size, Some(10));

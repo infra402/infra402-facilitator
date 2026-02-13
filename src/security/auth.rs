@@ -119,7 +119,10 @@ mod tests {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", HeaderValue::from_static("Bearer test-key-123"));
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer test-key-123"),
+        );
 
         assert!(auth.validate_request_auth(&headers).is_ok());
     }
@@ -135,7 +138,10 @@ mod tests {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", HeaderValue::from_static("Bearer wrong-key"));
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static("Bearer wrong-key"),
+        );
 
         assert!(auth.validate_request_auth(&headers).is_err());
     }

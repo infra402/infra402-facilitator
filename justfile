@@ -51,3 +51,13 @@ test-all:
   cd crates/x402-reqwest && cargo test
   cd examples/x402-axum-example && cargo test
   cd examples/x402-reqwest-example && cargo test
+
+# Protocol Compliance Tests
+compliance-install:
+  cd protocol-compliance && pnpm install
+
+compliance-typecheck:
+  cd protocol-compliance && pnpm typecheck
+
+compliance-test-all: build-all
+  cd protocol-compliance && pnpm test

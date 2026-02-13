@@ -90,7 +90,10 @@ impl Stats {
             }
             RequestOutcome::HttpError { error } => {
                 inner.http_errors += 1;
-                *inner.error_reasons.entry(format!("http_error: {}", error)).or_insert(0) += 1;
+                *inner
+                    .error_reasons
+                    .entry(format!("http_error: {}", error))
+                    .or_insert(0) += 1;
             }
         }
 

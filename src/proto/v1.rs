@@ -12,10 +12,10 @@
 // These are public API re-exports for library consumers.
 #[allow(unused_imports)]
 pub use crate::types::{
-    ErrorResponse, ExactEvmPayload, ExactEvmPayloadAuthorization, ExactPaymentPayload,
-    ExactSolanaPayload, EvmAddress, EvmSignature, FacilitatorErrorReason, HexEncodedNonce,
-    MixedAddress, MoneyAmount, PaymentPayload, PaymentRequiredResponse, PaymentRequirements,
-    Scheme, SettleRequest, SettleResponse, SupportedPaymentKind, SupportedPaymentKindExtra,
+    ErrorResponse, EvmAddress, EvmSignature, ExactEvmPayload, ExactEvmPayloadAuthorization,
+    ExactPaymentPayload, ExactSolanaPayload, FacilitatorErrorReason, HexEncodedNonce, MixedAddress,
+    MoneyAmount, PaymentPayload, PaymentRequiredResponse, PaymentRequirements, Scheme,
+    SettleRequest, SettleResponse, SupportedPaymentKind, SupportedPaymentKindExtra,
     SupportedPaymentKindsResponse, TokenAmount, TokenAsset, TokenDeployment, TokenDeploymentEip712,
     TransactionHash, VerifyRequest, VerifyResponse, X402Version,
 };

@@ -71,7 +71,9 @@ impl AbuseDetector {
             .entry(ip)
             .and_modify(|tracker| {
                 // Check if we're still within the tracking window
-                if now.duration_since(tracker.first_seen).unwrap_or_default() > self.config.tracking_window {
+                if now.duration_since(tracker.first_seen).unwrap_or_default()
+                    > self.config.tracking_window
+                {
                     // Reset tracking window
                     tracker.count = 1;
                     tracker.first_seen = now;
@@ -81,7 +83,9 @@ impl AbuseDetector {
                     tracker.last_seen = now;
 
                     // Log if threshold exceeded
-                    if tracker.count == self.config.invalid_signature_threshold && self.config.log_events {
+                    if tracker.count == self.config.invalid_signature_threshold
+                        && self.config.log_events
+                    {
                         tracing::warn!(
                             ip = %ip,
                             count = tracker.count,
@@ -106,7 +110,9 @@ impl AbuseDetector {
         if let Some(tracker) = self.invalid_signatures.get(ip) {
             let now = SystemTime::now();
             // Check if still within tracking window
-            if now.duration_since(tracker.first_seen).unwrap_or_default() <= self.config.tracking_window {
+            if now.duration_since(tracker.first_seen).unwrap_or_default()
+                <= self.config.tracking_window
+            {
                 return tracker.count >= self.config.invalid_signature_threshold;
             }
         }
@@ -147,7 +153,8 @@ impl AbuseDetector {
             .filter(|entry| {
                 let now = SystemTime::now();
                 let tracker = entry.value();
-                now.duration_since(tracker.first_seen).unwrap_or_default() <= self.config.tracking_window
+                now.duration_since(tracker.first_seen).unwrap_or_default()
+                    <= self.config.tracking_window
                     && tracker.count >= self.config.invalid_signature_threshold
             })
             .count();

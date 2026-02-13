@@ -36,9 +36,10 @@ use crate::types::{
     VerifyResponse,
 };
 
-pub fn routes() -> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>
-{
-    type FacilitatorType = crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>;
+pub fn routes()
+-> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>> {
+    type FacilitatorType =
+        crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>;
     Router::new()
         .route("/", get(get_root))
         .route("/verify", post(post_verify_versioned::<FacilitatorType>))
@@ -48,8 +49,7 @@ pub fn routes() -> Router<Arc<crate::facilitator_local::FacilitatorLocal<crate::
 }
 
 pub fn admin_routes() -> Router {
-    Router::new()
-        .route("/admin/stats", get(get_admin_stats))
+    Router::new().route("/admin/stats", get(get_admin_stats))
 }
 
 /// `GET /`: Returns API information with links to all available endpoints.
@@ -58,7 +58,8 @@ pub async fn get_root() -> impl IntoResponse {
     let pkg_version = env!("CARGO_PKG_VERSION");
     let pkg_description = env!("CARGO_PKG_DESCRIPTION");
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -187,7 +188,8 @@ Response (failure):
 
     <p style="margin-top: 30px;">Documentation: <a href="https://github.com/infra402/infra402-facilitator">https://github.com/infra402/infra402-facilitator</a></p>
 </body>
-</html>"#);
+</html>"#
+    );
 
     (StatusCode::OK, Html(html)).into_response()
 }
@@ -268,9 +270,14 @@ where
         ProtocolVersion::V1 => {
             // Parse as v1 request
             match serde_json::from_value::<VerifyRequest>(body.clone()) {
-                Ok(request) => {
-                    post_verify(State(facilitator), Extension(abuse_detector), ConnectInfo(addr), Json(request)).await.into_response()
-                }
+                Ok(request) => post_verify(
+                    State(facilitator),
+                    Extension(abuse_detector),
+                    ConnectInfo(addr),
+                    Json(request),
+                )
+                .await
+                .into_response(),
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to parse v1 verify request");
                     (
@@ -288,9 +295,14 @@ where
             // Full v2 support will be added incrementally
             tracing::debug!("Processing v2 verify request (converting to v1)");
             match convert_v2_to_v1_verify(&body) {
-                Ok(v1_request) => {
-                    post_verify(State(facilitator), Extension(abuse_detector), ConnectInfo(addr), Json(v1_request)).await.into_response()
-                }
+                Ok(v1_request) => post_verify(
+                    State(facilitator),
+                    Extension(abuse_detector),
+                    ConnectInfo(addr),
+                    Json(v1_request),
+                )
+                .await
+                .into_response(),
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to convert v2 to v1 verify request");
                     (
@@ -348,7 +360,9 @@ where
 /// and routes to the appropriate handler (v1 or v2).
 #[instrument(skip_all)]
 pub async fn post_settle_versioned(
-    State(facilitator): State<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>,
+    State(facilitator): State<
+        Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>,
+    >,
     Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
     Extension(batch_config): Extension<crate::config::BatchSettlementConfig>,
     Extension(abuse_detector): Extension<AbuseDetector>,
@@ -358,47 +372,41 @@ pub async fn post_settle_versioned(
     let version = detect_version(&body);
 
     match version {
-        ProtocolVersion::V1 => {
-            match serde_json::from_value::<SettleRequest>(body.clone()) {
-                Ok(request) => {
-                    post_settle(
-                        State(facilitator),
-                        Extension(batch_queue_manager),
-                        Extension(batch_config),
-                        Extension(abuse_detector),
-                        ConnectInfo(addr),
-                        Json(request),
-                    )
-                    .await
+        ProtocolVersion::V1 => match serde_json::from_value::<SettleRequest>(body.clone()) {
+            Ok(request) => post_settle(
+                State(facilitator),
+                Extension(batch_queue_manager),
+                Extension(batch_config),
+                Extension(abuse_detector),
+                ConnectInfo(addr),
+                Json(request),
+            )
+            .await
+            .into_response(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to parse v1 settle request");
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("Invalid v1 request: {e}"),
+                    }),
+                )
                     .into_response()
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to parse v1 settle request");
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(ErrorResponse {
-                            error: format!("Invalid v1 request: {e}"),
-                        }),
-                    )
-                        .into_response()
-                }
             }
-        }
+        },
         ProtocolVersion::V2 => {
             tracing::debug!("Processing v2 settle request (converting to v1)");
             match convert_v2_to_v1_settle(&body) {
-                Ok(v1_request) => {
-                    post_settle(
-                        State(facilitator),
-                        Extension(batch_queue_manager),
-                        Extension(batch_config),
-                        Extension(abuse_detector),
-                        ConnectInfo(addr),
-                        Json(v1_request),
-                    )
-                    .await
-                    .into_response()
-                }
+                Ok(v1_request) => post_settle(
+                    State(facilitator),
+                    Extension(batch_queue_manager),
+                    Extension(batch_config),
+                    Extension(abuse_detector),
+                    ConnectInfo(addr),
+                    Json(v1_request),
+                )
+                .await
+                .into_response(),
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to convert v2 to v1 settle request");
                     (
@@ -424,20 +432,22 @@ pub async fn post_settle_versioned(
 /// Requires API key authentication if enabled via `API_KEYS` environment variable.
 #[instrument(skip_all)]
 pub async fn post_settle(
-    State(facilitator): State<Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>>,
+    State(facilitator): State<
+        Arc<crate::facilitator_local::FacilitatorLocal<crate::provider_cache::ProviderCache>>,
+    >,
     Extension(batch_queue_manager): Extension<Option<Arc<crate::batch_queue::BatchQueueManager>>>,
     Extension(batch_config): Extension<crate::config::BatchSettlementConfig>,
     Extension(abuse_detector): Extension<AbuseDetector>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<SettleRequest>,
-) -> impl IntoResponse
-{
+) -> impl IntoResponse {
     // Extract network from request
     let network = body.payment_payload.network;
     let network_str = network.to_string();
 
     // Check if batching is enabled for this network
-    let use_batching = batch_queue_manager.is_some() && batch_config.is_enabled_for_network(&network_str);
+    let use_batching =
+        batch_queue_manager.is_some() && batch_config.is_enabled_for_network(&network_str);
 
     // Route to batch queue or direct settlement based on per-network configuration
     let result = if use_batching {
@@ -462,14 +472,12 @@ pub async fn post_settle(
         // Pre-select facilitator address using round-robin
         use crate::chain::NetworkProviderOps;
         let facilitator_addr: alloy::primitives::Address = match network_provider.as_ref() {
-            crate::chain::NetworkProvider::Evm(evm_provider) => {
-                evm_provider.next_signer_address()
-            }
+            crate::chain::NetworkProvider::Evm(evm_provider) => evm_provider.next_signer_address(),
             crate::chain::NetworkProvider::Solana(solana_provider) => {
                 // For Solana, extract address from signer_address
                 use crate::types::MixedAddress;
                 match solana_provider.signer_address() {
-                    MixedAddress::Evm(addr) => addr.0,  // Extract inner Address
+                    MixedAddress::Evm(addr) => addr.0, // Extract inner Address
                     MixedAddress::Solana(_) | MixedAddress::Offchain(_) => {
                         // Solana doesn't use EVM-style facilitator addresses
                         // Use a dummy address for queue key (won't be used for signing)
@@ -496,7 +504,9 @@ pub async fn post_settle(
         );
 
         // Enqueue to batch queue manager with network provider
-        let rx = manager.enqueue(facilitator_addr, network, network_provider, body.clone()).await;
+        let rx = manager
+            .enqueue(facilitator_addr, network, network_provider, body.clone())
+            .await;
 
         // Wait for batch processing to complete
         match rx.await {
@@ -583,16 +593,18 @@ fn convert_v2_to_v1_verify(v2_json: &serde_json::Value) -> Result<VerifyRequest,
         .ok_or("missing paymentPayload")?;
 
     // Convert chainId to network if present
-    let network = if let Some(chain_id_str) = payment_payload.get("chainId").and_then(|v| v.as_str())
-    {
-        let chain_id: ChainId = chain_id_str.parse().map_err(|e| format!("invalid chainId: {e}"))?;
-        Network::try_from(&chain_id).map_err(|e| format!("unknown chainId: {e}"))?
-    } else if let Some(network_value) = payment_payload.get("network") {
-        serde_json::from_value(network_value.clone())
-            .map_err(|e| format!("invalid network: {e}"))?
-    } else {
-        return Err("missing chainId or network in paymentPayload".to_string());
-    };
+    let network =
+        if let Some(chain_id_str) = payment_payload.get("chainId").and_then(|v| v.as_str()) {
+            let chain_id: ChainId = chain_id_str
+                .parse()
+                .map_err(|e| format!("invalid chainId: {e}"))?;
+            Network::try_from(&chain_id).map_err(|e| format!("unknown chainId: {e}"))?
+        } else if let Some(network_value) = payment_payload.get("network") {
+            serde_json::from_value(network_value.clone())
+                .map_err(|e| format!("invalid network: {e}"))?
+        } else {
+            return Err("missing chainId or network in paymentPayload".to_string());
+        };
 
     // Build v1 payment payload
     let mut v1_payload = payment_payload.clone();
@@ -605,18 +617,19 @@ fn convert_v2_to_v1_verify(v2_json: &serde_json::Value) -> Result<VerifyRequest,
         .ok_or("missing paymentRequirements")?;
 
     // Convert chainId to network in requirements if present
-    let req_network =
-        if let Some(chain_id_str) = payment_requirements.get("chainId").and_then(|v| v.as_str()) {
-            let chain_id: ChainId = chain_id_str
-                .parse()
-                .map_err(|e| format!("invalid chainId in requirements: {e}"))?;
-            Network::try_from(&chain_id).map_err(|e| format!("unknown chainId in requirements: {e}"))?
-        } else if let Some(network_value) = payment_requirements.get("network") {
-            serde_json::from_value(network_value.clone())
-                .map_err(|e| format!("invalid network in requirements: {e}"))?
-        } else {
-            return Err("missing chainId or network in paymentRequirements".to_string());
-        };
+    let req_network = if let Some(chain_id_str) =
+        payment_requirements.get("chainId").and_then(|v| v.as_str())
+    {
+        let chain_id: ChainId = chain_id_str
+            .parse()
+            .map_err(|e| format!("invalid chainId in requirements: {e}"))?;
+        Network::try_from(&chain_id).map_err(|e| format!("unknown chainId in requirements: {e}"))?
+    } else if let Some(network_value) = payment_requirements.get("network") {
+        serde_json::from_value(network_value.clone())
+            .map_err(|e| format!("invalid network in requirements: {e}"))?
+    } else {
+        return Err("missing chainId or network in paymentRequirements".to_string());
+    };
 
     // Build v1 requirements - handle resource object conversion
     let mut v1_requirements = payment_requirements.clone();
@@ -629,12 +642,18 @@ fn convert_v2_to_v1_verify(v2_json: &serde_json::Value) -> Result<VerifyRequest,
                 v1_requirements["resource"] = url.clone();
             }
             // Extract description and mimeType from resource if at top level they're missing
-            if !v1_requirements.get("description").is_some_and(|v| v.is_string()) {
+            if !v1_requirements
+                .get("description")
+                .is_some_and(|v| v.is_string())
+            {
                 if let Some(desc) = resource.get("description") {
                     v1_requirements["description"] = desc.clone();
                 }
             }
-            if !v1_requirements.get("mimeType").is_some_and(|v| v.is_string()) {
+            if !v1_requirements
+                .get("mimeType")
+                .is_some_and(|v| v.is_string())
+            {
                 if let Some(mime) = resource.get("mimeType") {
                     v1_requirements["mimeType"] = mime.clone();
                 }
@@ -814,8 +833,10 @@ mod tests {
 
     #[test]
     fn test_invalid_signature_is_400() {
-        let err =
-            FacilitatorLocalError::InvalidSignature(test_evm_address(), "signature mismatch".into());
+        let err = FacilitatorLocalError::InvalidSignature(
+            test_evm_address(),
+            "signature mismatch".into(),
+        );
         assert_eq!(expected_status(&err), StatusCode::BAD_REQUEST);
     }
 

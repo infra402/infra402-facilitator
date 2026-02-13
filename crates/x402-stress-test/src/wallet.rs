@@ -9,7 +9,9 @@ use infra402_facilitator::types::{
     HexEncodedNonce, MixedAddress, PaymentPayload, PaymentRequirements, Scheme, TokenAmount,
     X402Version,
 };
-use x402_chain_eip155::v1_eip155_exact::client::{sign_erc3009_authorization, Eip3009SigningParams};
+use x402_chain_eip155::v1_eip155_exact::client::{
+    sign_erc3009_authorization, Eip3009SigningParams,
+};
 use x402_chain_eip155::v1_eip155_exact::types::PaymentRequirementsExtra;
 
 /// EVM wallet adapter that uses upstream x402 signing infrastructure.
@@ -46,18 +48,21 @@ impl EvmSenderWallet {
         };
 
         // Extract extra (EIP-712 domain name/version)
-        let extra = requirements.extra.as_ref().map(|e| PaymentRequirementsExtra {
-            name: e
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            version: e
-                .get("version")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        });
+        let extra = requirements
+            .extra
+            .as_ref()
+            .map(|e| PaymentRequirementsExtra {
+                name: e
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                version: e
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            });
 
         // Create signing parameters
         let params = Eip3009SigningParams {

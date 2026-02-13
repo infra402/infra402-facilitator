@@ -105,11 +105,7 @@ impl RateLimiter {
                 }
             }
 
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                "Rate limit exceeded",
-            )
-                .into_response();
+            return (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
         }
 
         next.run(req).await
@@ -143,14 +139,12 @@ impl RateLimiter {
         let max_requests = self.config.requests_per_second as usize;
 
         // Get or create request history for this IP
-        let mut history = self.request_history
-            .entry(*ip)
-            .or_insert_with(Vec::new);
+        let mut history = self.request_history.entry(*ip).or_insert_with(Vec::new);
 
         // Remove requests older than 1 second
-        history.value_mut().retain(|&timestamp| {
-            now.duration_since(timestamp).unwrap_or_default() < window
-        });
+        history
+            .value_mut()
+            .retain(|&timestamp| now.duration_since(timestamp).unwrap_or_default() < window);
 
         // Check if we've exceeded the rate limit
         if history.value().len() >= max_requests {
@@ -168,7 +162,9 @@ impl RateLimiter {
             .entry(*ip)
             .and_modify(|tracker| {
                 // Reset if more than 1 minute has passed
-                if now.duration_since(tracker.last_reset).unwrap_or_default() > Duration::from_secs(60) {
+                if now.duration_since(tracker.last_reset).unwrap_or_default()
+                    > Duration::from_secs(60)
+                {
                     tracker.count = 1;
                     tracker.last_reset = now;
                 } else {

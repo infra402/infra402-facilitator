@@ -59,7 +59,8 @@ impl FacilitatorConfig {
 
     /// Load configuration from environment variable CONFIG_FILE or default path.
     pub fn from_env() -> Result<Self, config::ConfigError> {
-        let config_path = std::env::var("CONFIG_FILE").unwrap_or_else(|_| "config.toml".to_string());
+        let config_path =
+            std::env::var("CONFIG_FILE").unwrap_or_else(|_| "config.toml".to_string());
         Self::from_file(config_path)
     }
 }
@@ -101,8 +102,8 @@ impl Default for RateLimitingConfig {
 fn default_local_whitelist() -> Vec<IpNetwork> {
     use std::str::FromStr;
     vec![
-        IpNetwork::from_str("127.0.0.0/8").unwrap(),   // IPv4 localhost
-        IpNetwork::from_str("::1/128").unwrap(),        // IPv6 localhost
+        IpNetwork::from_str("127.0.0.0/8").unwrap(), // IPv4 localhost
+        IpNetwork::from_str("::1/128").unwrap(),     // IPv6 localhost
         IpNetwork::from_str("::ffff:127.0.0.0/104").unwrap(), // IPv4-mapped IPv6 localhost
     ]
 }
@@ -253,9 +254,9 @@ impl Default for TransactionConfig {
     fn default() -> Self {
         Self {
             default_rpc_timeout_seconds: 30, // 30 seconds
-            connection_timeout_seconds: 10, // 10 seconds
-            pool_max_idle_per_host: 100, // 100 connections
-            pool_idle_timeout_seconds: 90, // 90 seconds
+            connection_timeout_seconds: 10,  // 10 seconds
+            pool_max_idle_per_host: 100,     // 100 connections
+            pool_idle_timeout_seconds: 90,   // 90 seconds
             chains: HashMap::new(),
             gas_buffer: default_gas_buffer(),
         }
@@ -585,7 +586,11 @@ max_batch_size = 100
         assert!(!config.batch_settlement.enabled);
 
         // BSC testnet should be enabled despite global being disabled
-        assert!(config.batch_settlement.is_enabled_for_network("bsc-testnet"));
+        assert!(
+            config
+                .batch_settlement
+                .is_enabled_for_network("bsc-testnet")
+        );
 
         // Other networks should fall back to global (disabled)
         assert!(!config.batch_settlement.is_enabled_for_network("base"));

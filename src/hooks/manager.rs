@@ -8,11 +8,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::chain::evm::SettlementMetadata;
-use crate::tokens::TokenManager;
 use super::config::{HookConfig, HookDefinition};
 use super::context::RuntimeContext;
 use super::errors::HookError;
+use crate::chain::evm::SettlementMetadata;
+use crate::tokens::TokenManager;
 
 /// Runtime hook call specification
 #[derive(Debug, Clone)]
@@ -138,7 +138,9 @@ impl HookManager {
         // Mapping keys support env var substitution: "${ENV_VAR_NAME}"
         let mut hook_names: Option<&Vec<String>> = None;
         for (address_str, names) in mappings.iter() {
-            if let Some(resolved_addr) = super::config::HookSettings::resolve_mapping_address(address_str) {
+            if let Some(resolved_addr) =
+                super::config::HookSettings::resolve_mapping_address(address_str)
+            {
                 if resolved_addr == destination {
                     hook_names = Some(names);
                     break;
@@ -177,7 +179,9 @@ impl HookManager {
                 }
 
                 // Check token filter if token filtering is configured
-                if let (Some(token_name_val), Some(network_cfg)) = (token_name.as_ref(), network_config) {
+                if let (Some(token_name_val), Some(network_cfg)) =
+                    (token_name.as_ref(), network_config)
+                {
                     if let Some(filter) = network_cfg.token_filters.get(name) {
                         if !filter.matches(token_name_val) {
                             tracing::debug!(
@@ -201,7 +205,11 @@ impl HookManager {
                 }
 
                 // Resolve contract address for this network and destination
-                let contract_address = match state.resolve_contract_address(name, network, &destination) {
+                let contract_address = match state.resolve_contract_address(
+                    name,
+                    network,
+                    &destination,
+                ) {
                     Some(addr) => addr,
                     None => {
                         tracing::warn!(
@@ -325,7 +333,7 @@ impl HookManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{address, U256};
+    use alloy::primitives::{U256, address};
 
     #[tokio::test]
     async fn test_hook_manager_no_hooks() {
@@ -371,7 +379,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x2222222222222222222222222222222222222222"),
-                address!("0x0000000000000000000000000000000000000000"),  // Dummy token address
+                address!("0x0000000000000000000000000000000000000000"), // Dummy token address
                 "base_sepolia",
                 &metadata,
                 &runtime,
@@ -425,8 +433,8 @@ mod tests {
         let mut network_contracts = HashMap::new();
         let mut test_hook_contracts = HashMap::new();
         test_hook_contracts.insert(
-            "0x3333333333333333333333333333333333333333".to_string(),  // destination
-            "0x1234567890123456789012345678901234567890".to_string(),  // contract
+            "0x3333333333333333333333333333333333333333".to_string(), // destination
+            "0x1234567890123456789012345678901234567890".to_string(), // contract
         );
         network_contracts.insert("test_hook".to_string(), test_hook_contracts);
 
@@ -465,7 +473,7 @@ mod tests {
             valid_after: U256::ZERO,
             valid_before: U256::MAX,
             nonce: alloy::primitives::FixedBytes::ZERO,
-            signature: Bytes::new(),  // Empty signature for testing
+            signature: Bytes::new(), // Empty signature for testing
             contract_address: address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
             sig_kind: "eoa".to_string(),
         };
@@ -479,7 +487,7 @@ mod tests {
         let hooks = manager
             .get_hooks_for_destination_with_context(
                 address!("0x3333333333333333333333333333333333333333"),
-                address!("0x0000000000000000000000000000000000000000"),  // Dummy token address
+                address!("0x0000000000000000000000000000000000000000"), // Dummy token address
                 "base_sepolia",
                 &metadata,
                 &runtime,
@@ -488,7 +496,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(hooks.len(), 1);
-        assert_eq!(hooks[0].target, address!("0x1234567890123456789012345678901234567890"));
+        assert_eq!(
+            hooks[0].target,
+            address!("0x1234567890123456789012345678901234567890")
+        );
         assert!(hooks[0].calldata.len() > 4); // Should have selector + encoded params
     }
 }

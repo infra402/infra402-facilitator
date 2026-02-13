@@ -227,7 +227,8 @@ pub struct EvmProvider {
     /// Nonce manager for resetting nonces on transaction failures.
     nonce_manager: PendingNonceManager,
     /// EIP-712 version cache shared across all providers
-    eip712_version_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
+    eip712_version_cache:
+        Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
     /// Token manager for dynamic contract selection based on token configuration
     token_manager: Arc<TokenManager>,
 }
@@ -271,22 +272,18 @@ impl EvmProvider {
         );
 
         // Parse RPC URL for HTTP client configuration
-        let url = rpc_url
-            .parse::<url::Url>()
-            .map_err(|e| {
-                let error_str = format!("{:?}", e);
-                if error_str.contains("failed to lookup address") {
-                    tracing::error!("DNS lookup failed for {rpc_url}: {e:?}");
-                    FacilitatorLocalError::RpcProviderError(
-                        format!("DNS resolution failed for {rpc_url}")
-                    )
-                } else {
-                    tracing::error!("Invalid RPC URL {rpc_url}: {e:?}");
-                    FacilitatorLocalError::RpcProviderError(
-                        format!("Invalid RPC URL: {rpc_url}")
-                    )
-                }
-            })?;
+        let url = rpc_url.parse::<url::Url>().map_err(|e| {
+            let error_str = format!("{:?}", e);
+            if error_str.contains("failed to lookup address") {
+                tracing::error!("DNS lookup failed for {rpc_url}: {e:?}");
+                FacilitatorLocalError::RpcProviderError(format!(
+                    "DNS resolution failed for {rpc_url}"
+                ))
+            } else {
+                tracing::error!("Invalid RPC URL {rpc_url}: {e:?}");
+                FacilitatorLocalError::RpcProviderError(format!("Invalid RPC URL: {rpc_url}"))
+            }
+        })?;
 
         // Get connection pool configuration from config or use defaults
         let connection_timeout_secs = config
@@ -324,19 +321,18 @@ impl EvmProvider {
                         pool_max_idle
                     );
                     FacilitatorLocalError::ResourceExhaustion(
-                        "File descriptor limit reached".to_string()
+                        "File descriptor limit reached".to_string(),
                     )
                 } else {
                     tracing::error!("HTTP client build failed: {e:?}");
-                    FacilitatorLocalError::RpcProviderError(
-                        format!("HTTP client initialization failed: {e}")
-                    )
+                    FacilitatorLocalError::RpcProviderError(format!(
+                        "HTTP client initialization failed: {e}"
+                    ))
                 }
             })?;
 
         // Create RPC client with custom HTTP client
-        let client = RpcClient::builder()
-            .http_with_client(http_client, url);
+        let client = RpcClient::builder().http_with_client(http_client, url);
 
         // Create nonce manager explicitly so we can store a reference for error handling
         let nonce_manager = PendingNonceManager::default();
@@ -347,7 +343,10 @@ impl EvmProvider {
             GasFiller,
             JoinFill::new(
                 BlobGasFiller::default(),
-                JoinFill::new(NonceFiller::new(nonce_manager.clone()), ChainIdFiller::default()),
+                JoinFill::new(
+                    NonceFiller::new(nonce_manager.clone()),
+                    ChainIdFiller::default(),
+                ),
             ),
         );
 
@@ -366,7 +365,9 @@ impl EvmProvider {
             signer_cursor,
             settlement_locks: Arc::new(DashMap::new()),
             nonce_manager,
-            eip712_version_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            eip712_version_cache: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             token_manager,
         })
     }
@@ -403,7 +404,10 @@ impl EvmProvider {
     /// Note: This does NOT prevent duplicate ERC-3009 signatures - that is the
     /// smart contract's responsibility. The facilitator only ensures correct
     /// blockchain-level nonce ordering.
-    pub async fn settle_with_lock(&self, request: &SettleRequest) -> Result<SettleResponse, FacilitatorLocalError> {
+    pub async fn settle_with_lock(
+        &self,
+        request: &SettleRequest,
+    ) -> Result<SettleResponse, FacilitatorLocalError> {
         // Step 1: Select facilitator address early to acquire settlement lock BEFORE validation
         // This ensures FIFO ordering - earlier requests lock first regardless of validation timing
         let facilitator_address = self.next_signer_address();
@@ -421,7 +425,9 @@ impl EvmProvider {
 
         // Step 3: Call the trait's settle method with pre-selected facilitator address
         // Use task-local storage to pass the address to send_transaction()
-        PRESELECTED_FACILITATOR.scope(facilitator_address, Facilitator::settle(self, request)).await
+        PRESELECTED_FACILITATOR
+            .scope(facilitator_address, Facilitator::settle(self, request))
+            .await
     }
 }
 
@@ -437,7 +443,9 @@ pub trait MetaEvmProvider {
     /// Returns reference to chain descriptor.
     fn chain(&self) -> &EvmChain;
     /// Returns reference to EIP-712 version cache.
-    fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>;
+    fn eip712_cache(
+        &self,
+    ) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>;
     /// Returns reference to token manager for dynamic contract selection.
     fn token_manager(&self) -> &TokenManager;
 
@@ -473,7 +481,10 @@ impl MetaEvmProvider for EvmProvider {
         &self.chain
     }
 
-    fn eip712_cache(&self) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>> {
+    fn eip712_cache(
+        &self,
+    ) -> &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>
+    {
         &self.eip712_version_cache
     }
 
@@ -523,9 +534,10 @@ impl MetaEvmProvider for EvmProvider {
         tx: MetaTransaction,
     ) -> Result<TransactionReceipt, Self::Error> {
         // Use pre-selected address if provided, otherwise check task-local, otherwise use round-robin
-        let from_address = tx.from.or_else(|| {
-            PRESELECTED_FACILITATOR.try_with(|addr| *addr).ok()
-        }).unwrap_or_else(|| self.next_signer_address());
+        let from_address = tx
+            .from
+            .or_else(|| PRESELECTED_FACILITATOR.try_with(|addr| *addr).ok())
+            .unwrap_or_else(|| self.next_signer_address());
 
         let mut txr = TransactionRequest::default()
             .with_to(tx.to)
@@ -570,13 +582,9 @@ impl MetaEvmProvider for EvmProvider {
             .unwrap_or(1.0);
 
         if gas_buffer > 1.0 {
-            let estimated_gas = self
-                .inner
-                .estimate_gas(txr.clone())
-                .await
-                .map_err(|e| {
-                    FacilitatorLocalError::ContractCall(format!("Gas estimation failed: {e:?}"))
-                })?;
+            let estimated_gas = self.inner.estimate_gas(txr.clone()).await.map_err(|e| {
+                FacilitatorLocalError::ContractCall(format!("Gas estimation failed: {e:?}"))
+            })?;
 
             let buffered_gas = (estimated_gas as f64 * gas_buffer) as u64;
             tracing::debug!(
@@ -600,13 +608,11 @@ impl MetaEvmProvider for EvmProvider {
                     let error_str = format!("{e:?}");
 
                     // Handle nonce mismatch - parse expected nonce and retry
-                    let is_nonce_error = error_str.contains("nonce too low")
-                        || error_str.contains("nonce too high");
+                    let is_nonce_error =
+                        error_str.contains("nonce too low") || error_str.contains("nonce too high");
 
                     if is_nonce_error && nonce_retry_count < MAX_NONCE_RETRIES {
-                        if let Some(expected_nonce) =
-                            parse_expected_nonce_from_error(&error_str)
-                        {
+                        if let Some(expected_nonce) = parse_expected_nonce_from_error(&error_str) {
                             tracing::warn!(
                                 from = %from_address,
                                 expected_nonce,
@@ -704,14 +710,16 @@ impl FromEnvByNetworkBuild for EvmProvider {
         let token_manager = if let Some(tm) = token_manager {
             Arc::clone(tm)
         } else {
-            let tokens_path = std::env::var("TOKENS_FILE").unwrap_or_else(|_| "tokens.toml".to_string());
+            let tokens_path =
+                std::env::var("TOKENS_FILE").unwrap_or_else(|_| "tokens.toml".to_string());
             Arc::new(
                 TokenManager::new(&tokens_path)
-                    .map_err(|e| format!("Failed to load TokenManager: {}", e))?
+                    .map_err(|e| format!("Failed to load TokenManager: {}", e))?,
             )
         };
 
-        let provider = EvmProvider::try_new(wallet, &rpc_url, is_eip1559, network, token_manager).await?;
+        let provider =
+            EvmProvider::try_new(wallet, &rpc_url, is_eip1559, network, token_manager).await?;
         Ok(Some(provider))
     }
 }
@@ -740,8 +748,16 @@ where
         let requirements = &request.payment_requirements;
 
         // Perform payment validation WITHOUT balance check (we'll batch it with signature validation)
-        let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), true, self.token_manager()).await?;
+        let (contract, payment, eip712_domain) = assert_valid_payment(
+            self.inner(),
+            self.chain(),
+            payload,
+            requirements,
+            Some(self.eip712_cache()),
+            true,
+            self.token_manager(),
+        )
+        .await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -764,58 +780,66 @@ where
                 // Execute ALL three calls in a single Multicall3 transaction: balance + signature + transfer
                 // Both PackedBytes and SeparateVrs contracts use the same balanceOf() interface
                 match (&contract, transfer_call.tx) {
-                    (Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)), TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx))) => {
+                    (
+                        Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)),
+                        TransferWithAuthorizationCallBuilder::PackedBytes(
+                            PackedBytesCallBuilder::Usdc(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
-                        let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
-                                .multicall()
-                                .add(balance_call.clone())
-                                .add(is_valid_signature_call.clone())
-                                .add(tx.clone())
-                                .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip3009",
-                                        from = %transfer_call.from,
-                                        to = %transfer_call.to,
-                                        value = %transfer_call.value,
-                                        valid_after = %transfer_call.valid_after,
-                                        valid_before = %transfer_call.valid_before,
-                                        nonce = %transfer_call.nonce,
-                                        signature = %transfer_call.signature,
-                                        token_contract = %transfer_call.contract_address,
-                                        otel.kind = "client",
-                                )),
-                            self
-                                .inner()
-                                .multicall()
-                                .add(balance_call)
-                                .add(is_valid_signature_call.clone())
-                                .add(tx)
-                                .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip3009",
-                                        from = %transfer_call.from,
-                                        to = %transfer_call.to,
-                                        value = %transfer_call.value,
-                                        valid_after = %transfer_call.valid_after,
-                                        valid_before = %transfer_call.valid_before,
-                                        nonce = %transfer_call.nonce,
-                                        signature = %transfer_call.signature,
-                                        token_contract = %transfer_call.contract_address,
-                                        otel.kind = "client",
-                                )),
-                        )
-                        .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        let (balance_result, is_valid_signature_result, transfer_result) =
+                            call_with_fallback(
+                                self.inner()
+                                    .multicall()
+                                    .add(balance_call.clone())
+                                    .add(is_valid_signature_call.clone())
+                                    .add(tx.clone())
+                                    .aggregate3()
+                                    .instrument(tracing::info_span!("batched_verify_eip3009",
+                                            from = %transfer_call.from,
+                                            to = %transfer_call.to,
+                                            value = %transfer_call.value,
+                                            valid_after = %transfer_call.valid_after,
+                                            valid_before = %transfer_call.valid_before,
+                                            nonce = %transfer_call.nonce,
+                                            signature = %transfer_call.signature,
+                                            token_contract = %transfer_call.contract_address,
+                                            otel.kind = "client",
+                                    )),
+                                self.inner()
+                                    .multicall()
+                                    .add(balance_call)
+                                    .add(is_valid_signature_call.clone())
+                                    .add(tx)
+                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                    .aggregate3()
+                                    .instrument(tracing::info_span!("batched_verify_eip3009",
+                                            from = %transfer_call.from,
+                                            to = %transfer_call.to,
+                                            value = %transfer_call.value,
+                                            valid_after = %transfer_call.valid_after,
+                                            valid_before = %transfer_call.valid_before,
+                                            nonce = %transfer_call.nonce,
+                                            signature = %transfer_call.signature,
+                                            token_contract = %transfer_call.contract_address,
+                                            otel.kind = "client",
+                                    )),
+                            )
+                            .await
+                            .map_err(|e| {
+                                categorize_transport_error(e, "batched verification multicall")
+                            })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check signature validation result
-                        let is_valid_signature_result = is_valid_signature_result
-                            .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
+                        let is_valid_signature_result = is_valid_signature_result.map_err(|e| {
+                            categorize_transport_error(e, "signature validation result")
+                        })?;
                         if !is_valid_signature_result {
                             return Err(FacilitatorLocalError::InvalidSignature(
                                 payer.into(),
@@ -823,16 +847,20 @@ where
                             ));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx))) => {
+                    (
+                        Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::Xbnb(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call.clone())
-                                
                                 .add(tx.clone())
                                 .aggregate3()
                                 .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
@@ -846,11 +874,9 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call)
-                                
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
@@ -867,68 +893,82 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        .map_err(|e| {
+                            categorize_transport_error(e, "batched verification multicall")
+                        })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx))) => {
+                    (
+                        Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(
+                            contract_inst,
+                        )),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::StandardEip3009(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
-                        let (balance_result, is_valid_signature_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
-                                .multicall()
-                                .add(balance_call.clone())
-                                .add(is_valid_signature_call.clone())
-                                .add(tx.clone())
-                                .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip3009",
-                                        from = %transfer_call.from,
-                                        to = %transfer_call.to,
-                                        value = %transfer_call.value,
-                                        valid_after = %transfer_call.valid_after,
-                                        valid_before = %transfer_call.valid_before,
-                                        nonce = %transfer_call.nonce,
-                                        signature = %transfer_call.signature,
-                                        token_contract = %transfer_call.contract_address,
-                                        otel.kind = "client",
-                                )),
-                            self
-                                .inner()
-                                .multicall()
-                                .add(balance_call)
-                                .add(is_valid_signature_call)
-                                .add(tx)
-                                .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .aggregate3()
-                                .instrument(tracing::info_span!("batched_verify_eip3009",
-                                        from = %transfer_call.from,
-                                        to = %transfer_call.to,
-                                        value = %transfer_call.value,
-                                        valid_after = %transfer_call.valid_after,
-                                        valid_before = %transfer_call.valid_before,
-                                        nonce = %transfer_call.nonce,
-                                        signature = %transfer_call.signature,
-                                        token_contract = %transfer_call.contract_address,
-                                        otel.kind = "client",
-                                )),
-                        )
-                        .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        let (balance_result, is_valid_signature_result, transfer_result) =
+                            call_with_fallback(
+                                self.inner()
+                                    .multicall()
+                                    .add(balance_call.clone())
+                                    .add(is_valid_signature_call.clone())
+                                    .add(tx.clone())
+                                    .aggregate3()
+                                    .instrument(tracing::info_span!("batched_verify_eip3009",
+                                            from = %transfer_call.from,
+                                            to = %transfer_call.to,
+                                            value = %transfer_call.value,
+                                            valid_after = %transfer_call.valid_after,
+                                            valid_before = %transfer_call.valid_before,
+                                            nonce = %transfer_call.nonce,
+                                            signature = %transfer_call.signature,
+                                            token_contract = %transfer_call.contract_address,
+                                            otel.kind = "client",
+                                    )),
+                                self.inner()
+                                    .multicall()
+                                    .add(balance_call)
+                                    .add(is_valid_signature_call)
+                                    .add(tx)
+                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                    .aggregate3()
+                                    .instrument(tracing::info_span!("batched_verify_eip3009",
+                                            from = %transfer_call.from,
+                                            to = %transfer_call.to,
+                                            value = %transfer_call.value,
+                                            valid_after = %transfer_call.valid_after,
+                                            valid_before = %transfer_call.valid_before,
+                                            nonce = %transfer_call.nonce,
+                                            signature = %transfer_call.signature,
+                                            token_contract = %transfer_call.contract_address,
+                                            otel.kind = "client",
+                                    )),
+                            )
+                            .await
+                            .map_err(|e| {
+                                categorize_transport_error(e, "batched verification multicall")
+                            })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check signature validation result
-                        let is_valid_signature_result = is_valid_signature_result
-                            .map_err(|e| categorize_transport_error(e, "signature validation result"))?;
+                        let is_valid_signature_result = is_valid_signature_result.map_err(|e| {
+                            categorize_transport_error(e, "signature validation result")
+                        })?;
                         if !is_valid_signature_result {
                             return Err(FacilitatorLocalError::InvalidSignature(
                                 payer.into(),
@@ -936,11 +976,12 @@ where
                             ));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
                     _ => {
                         return Err(FacilitatorLocalError::ContractCall(
-                            "Mismatched token contract and transfer call builder".to_string()
+                            "Mismatched token contract and transfer call builder".to_string(),
                         ));
                     }
                 }
@@ -954,11 +995,15 @@ where
                 // Batch balance check + transfer simulation in a single Multicall3
                 // Both PackedBytes and SeparateVrs contracts use the same balanceOf() interface
                 match (&contract, transfer_call.tx) {
-                    (Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)), TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx))) => {
+                    (
+                        Erc3009Contract::PackedBytes(PackedBytesAbi::Usdc(contract_inst)),
+                        TransferWithAuthorizationCallBuilder::PackedBytes(
+                            PackedBytesCallBuilder::Usdc(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call.clone())
                                 .add(tx.clone())
@@ -974,8 +1019,7 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call)
                                 .add(tx)
@@ -994,24 +1038,31 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        .map_err(|e| {
+                            categorize_transport_error(e, "batched verification multicall")
+                        })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx))) => {
+                    (
+                        Erc3009Contract::SeparateVrs(SeparateVrsAbi::Xbnb(contract_inst)),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::Xbnb(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call.clone())
-                                
                                 .add(tx.clone())
                                 .aggregate3()
                                 .instrument(tracing::info_span!("batched_verify_eip1271_eip3009",
@@ -1025,11 +1076,9 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call)
-                                
                                 .add(tx)
                                 .block(BlockId::Number(BlockNumberOrTag::Latest))
                                 .aggregate3()
@@ -1046,21 +1095,31 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        .map_err(|e| {
+                            categorize_transport_error(e, "batched verification multicall")
+                        })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
-                    (Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(contract_inst)), TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx))) => {
+                    (
+                        Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(
+                            contract_inst,
+                        )),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::StandardEip3009(tx),
+                        ),
+                    ) => {
                         let balance_call = contract_inst.balanceOf(payment.from.0);
                         let (balance_result, transfer_result) = call_with_fallback(
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call.clone())
                                 .add(tx.clone())
@@ -1076,8 +1135,7 @@ where
                                         token_contract = %transfer_call.contract_address,
                                         otel.kind = "client",
                                 )),
-                            self
-                                .inner()
+                            self.inner()
                                 .multicall()
                                 .add(balance_call)
                                 .add(tx)
@@ -1096,19 +1154,23 @@ where
                                 )),
                         )
                         .await
-                        .map_err(|e| categorize_transport_error(e, "batched verification multicall"))?;
+                        .map_err(|e| {
+                            categorize_transport_error(e, "batched verification multicall")
+                        })?;
 
                         // Check balance result
-                        let balance = balance_result.map_err(|e| categorize_transport_error(e, "balance query"))?;
+                        let balance = balance_result
+                            .map_err(|e| categorize_transport_error(e, "balance query"))?;
                         if balance < max_amount_required {
                             return Err(FacilitatorLocalError::InsufficientFunds(payer.into()));
                         }
                         // Check transfer simulation result
-                        transfer_result.map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
+                        transfer_result
+                            .map_err(|e| categorize_transport_error(e, "transfer simulation"))?;
                     }
                     _ => {
                         return Err(FacilitatorLocalError::ContractCall(
-                            "Mismatched token contract and transfer call builder".to_string()
+                            "Mismatched token contract and transfer call builder".to_string(),
                         ));
                     }
                 }
@@ -1141,8 +1203,16 @@ where
     async fn settle(&self, request: &SettleRequest) -> Result<SettleResponse, Self::Error> {
         let payload = &request.payment_payload;
         let requirements = &request.payment_requirements;
-        let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false, self.token_manager()).await?;
+        let (contract, payment, eip712_domain) = assert_valid_payment(
+            self.inner(),
+            self.chain(),
+            payload,
+            requirements,
+            Some(self.eip712_cache()),
+            false,
+            self.token_manager(),
+        )
+        .await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -1377,8 +1447,16 @@ impl EvmProvider {
         let requirements = &request.payment_requirements;
 
         // Validate payment and extract contract, payment data, and EIP-712 domain
-        let (contract, payment, eip712_domain) =
-            assert_valid_payment(self.inner(), self.chain(), payload, requirements, Some(self.eip712_cache()), false, &self.token_manager).await?;
+        let (contract, payment, eip712_domain) = assert_valid_payment(
+            self.inner(),
+            self.chain(),
+            payload,
+            requirements,
+            Some(self.eip712_cache()),
+            false,
+            &self.token_manager,
+        )
+        .await?;
 
         let signed_message = SignedMessage::extract(&payment, &eip712_domain)?;
         let payer = signed_message.address;
@@ -1435,12 +1513,25 @@ impl EvmProvider {
                 let hooks = if let Some(hook_mgr) = hook_manager {
                     // Create runtime context for parameter resolution
                     // Use first signer address as placeholder (actual sender determined at settlement time)
-                    let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+                    let sender = self
+                        .signer_addresses
+                        .first()
+                        .copied()
+                        .unwrap_or(Address::ZERO);
                     let network = &self.chain().network().to_string();
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, contract_address, network, &metadata, &runtime).await {
+                            match hook_mgr
+                                .get_hooks_for_destination_with_context(
+                                    to,
+                                    contract_address,
+                                    network,
+                                    &metadata,
+                                    &runtime,
+                                )
+                                .await
+                            {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
@@ -1514,12 +1605,25 @@ impl EvmProvider {
                 let hooks = if let Some(hook_mgr) = hook_manager {
                     // Create runtime context for parameter resolution
                     // Use first signer address as placeholder (actual sender determined at settlement time)
-                    let sender = self.signer_addresses.first().copied().unwrap_or(Address::ZERO);
+                    let sender = self
+                        .signer_addresses
+                        .first()
+                        .copied()
+                        .unwrap_or(Address::ZERO);
                     let network = &self.chain().network().to_string();
 
                     match RuntimeContext::from_provider(self.inner(), sender).await {
                         Ok(runtime) => {
-                            match hook_mgr.get_hooks_for_destination_with_context(to, contract_address, network, &metadata, &runtime).await {
+                            match hook_mgr
+                                .get_hooks_for_destination_with_context(
+                                    to,
+                                    contract_address,
+                                    network,
+                                    &metadata,
+                                    &runtime,
+                                )
+                                .await
+                            {
                                 Ok(hooks) => hooks,
                                 Err(e) => {
                                     tracing::error!(
@@ -1630,13 +1734,12 @@ impl EvmProvider {
                 confirmations: 1,
                 from: None,
             })
-            .instrument(
-                tracing::info_span!("batch_settle_multicall3",
-                    batch_size = settlements.len(),
-                    allow_partial_failure = allow_partial_failure,
-                    otel.kind = "client",
-                ),
-            )
+            .instrument(tracing::info_span!(
+                "batch_settle_multicall3",
+                batch_size = settlements.len(),
+                allow_partial_failure = allow_partial_failure,
+                otel.kind = "client",
+            ))
             .await?;
 
         // Parse results from Multicall3 aggregate3 return data
@@ -1869,9 +1972,13 @@ pub struct TransferWithAuthorization0Call<P> {
 /// with code -32603 and message "Unsupported pending tag".
 fn is_unsupported_pending_error<E: std::fmt::Debug>(error: &E) -> bool {
     let error_str = format!("{:?}", error);
-    let has_error = error_str.contains("Unsupported pending") || error_str.contains("unsupported pending");
+    let has_error =
+        error_str.contains("Unsupported pending") || error_str.contains("unsupported pending");
     if has_error {
-        tracing::warn!("Detected unsupported pending block tag error: {}", error_str);
+        tracing::warn!(
+            "Detected unsupported pending block tag error: {}",
+            error_str
+        );
     }
     has_error
 }
@@ -1959,89 +2066,83 @@ async fn assert_enough_balance<P: Provider>(
 ) -> Result<(), FacilitatorLocalError> {
     let balance = match token_contract {
         Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
-            PackedBytesAbi::Usdc(contract_inst) => {
-                call_with_fallback(
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .block(BlockId::Number(BlockNumberOrTag::Latest))
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                )
-                .await
-                .map_err(|e| categorize_transport_error(e, "balance query"))?
-            }
+            PackedBytesAbi::Usdc(contract_inst) => call_with_fallback(
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| categorize_transport_error(e, "balance query"))?,
         },
         Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
-            SeparateVrsAbi::Xbnb(contract_inst) => {
-                call_with_fallback(
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .block(BlockId::Number(BlockNumberOrTag::Latest))
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                )
-                .await
-                .map_err(|e| categorize_transport_error(e, "balance query"))?
-            }
-            SeparateVrsAbi::StandardEip3009(contract_inst) => {
-                call_with_fallback(
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                    contract_inst
-                        .balanceOf(sender.0)
-                        .call()
-                        .block(BlockId::Number(BlockNumberOrTag::Latest))
-                        .into_future()
-                        .instrument(tracing::info_span!(
-                            "fetch_token_balance",
-                            token_contract = %contract_inst.address(),
-                            sender = %sender,
-                            otel.kind = "client"
-                        )),
-                )
-                .await
-                .map_err(|e| categorize_transport_error(e, "balance query"))?
-            }
+            SeparateVrsAbi::Xbnb(contract_inst) => call_with_fallback(
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| categorize_transport_error(e, "balance query"))?,
+            SeparateVrsAbi::StandardEip3009(contract_inst) => call_with_fallback(
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+                contract_inst
+                    .balanceOf(sender.0)
+                    .call()
+                    .block(BlockId::Number(BlockNumberOrTag::Latest))
+                    .into_future()
+                    .instrument(tracing::info_span!(
+                        "fetch_token_balance",
+                        token_contract = %contract_inst.address(),
+                        sender = %sender,
+                        otel.kind = "client"
+                    )),
+            )
+            .await
+            .map_err(|e| categorize_transport_error(e, "balance query"))?,
         },
     };
 
@@ -2129,7 +2230,9 @@ async fn assert_domain<P: Provider>(
     payload: &PaymentPayload,
     asset_address: &Address,
     requirements: &PaymentRequirements,
-    version_cache: Option<&Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>>,
+    version_cache: Option<
+        &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
+    >,
 ) -> Result<Eip712Domain, FacilitatorLocalError> {
     let usdc = USDCDeployment::by_network(payload.network);
     let name = requirements
@@ -2156,43 +2259,42 @@ async fn assert_domain<P: Provider>(
     } else {
         // Check cache first if available
         if let Some(cache) = version_cache {
-            if let Some(cached_version) = cache.read().await.get(asset_address).and_then(|(v, cached_at)| {
-                const CACHE_TTL: Duration = Duration::from_secs(3600); // 1 hour
-                if cached_at.elapsed() > CACHE_TTL {
-                    None
-                } else {
-                    Some(v.clone())
-                }
-            }) {
+            if let Some(cached_version) =
+                cache
+                    .read()
+                    .await
+                    .get(asset_address)
+                    .and_then(|(v, cached_at)| {
+                        const CACHE_TTL: Duration = Duration::from_secs(3600); // 1 hour
+                        if cached_at.elapsed() > CACHE_TTL {
+                            None
+                        } else {
+                            Some(v.clone())
+                        }
+                    })
+            {
                 tracing::debug!(token = %asset_address, version = %cached_version, "using cached EIP-712 version");
                 cached_version
             } else {
                 // Cache miss or expired - fetch from RPC
                 let fetched_version = match token_contract {
                     Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
-                        PackedBytesAbi::Usdc(usdc_contract) => {
-                            call_with_fallback(
-                                usdc_contract
-                                    .version()
-                                    .call()
-                                    .into_future()
-                                    .instrument(tracing::info_span!(
-                                        "fetch_eip712_version",
-                                        otel.kind = "client",
-                                    )),
-                                usdc_contract
-                                    .version()
-                                    .call()
-                                    .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                    .into_future()
-                                    .instrument(tracing::info_span!(
-                                        "fetch_eip712_version",
-                                        otel.kind = "client",
-                                    )),
-                            )
-                            .await
-                            .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
-                        }
+                        PackedBytesAbi::Usdc(usdc_contract) => call_with_fallback(
+                            usdc_contract.version().call().into_future().instrument(
+                                tracing::info_span!("fetch_eip712_version", otel.kind = "client",),
+                            ),
+                            usdc_contract
+                                .version()
+                                .call()
+                                .block(BlockId::Number(BlockNumberOrTag::Latest))
+                                .into_future()
+                                .instrument(tracing::info_span!(
+                                    "fetch_eip712_version",
+                                    otel.kind = "client",
+                                )),
+                        )
+                        .await
+                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?,
                     },
                     Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
                         SeparateVrsAbi::Xbnb(erc20_contract) => {
@@ -2246,7 +2348,10 @@ async fn assert_domain<P: Provider>(
                     },
                 };
                 // Store in cache for future requests
-                cache.write().await.insert(*asset_address, (fetched_version.clone(), std::time::Instant::now()));
+                cache.write().await.insert(
+                    *asset_address,
+                    (fetched_version.clone(), std::time::Instant::now()),
+                );
                 tracing::debug!(token = %asset_address, version = %fetched_version, "cached EIP-712 version");
                 fetched_version
             }
@@ -2254,29 +2359,22 @@ async fn assert_domain<P: Provider>(
             // No cache provided - fetch directly (legacy behavior)
             match token_contract {
                 Erc3009Contract::PackedBytes(packed_abi) => match packed_abi {
-                    PackedBytesAbi::Usdc(usdc_contract) => {
-                        call_with_fallback(
-                            usdc_contract
-                                .version()
-                                .call()
-                                .into_future()
-                                .instrument(tracing::info_span!(
-                                    "fetch_eip712_version",
-                                    otel.kind = "client",
-                                )),
-                            usdc_contract
-                                .version()
-                                .call()
-                                .block(BlockId::Number(BlockNumberOrTag::Latest))
-                                .into_future()
-                                .instrument(tracing::info_span!(
-                                    "fetch_eip712_version",
-                                    otel.kind = "client",
-                                )),
-                        )
-                        .await
-                        .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?
-                    }
+                    PackedBytesAbi::Usdc(usdc_contract) => call_with_fallback(
+                        usdc_contract.version().call().into_future().instrument(
+                            tracing::info_span!("fetch_eip712_version", otel.kind = "client",),
+                        ),
+                        usdc_contract
+                            .version()
+                            .call()
+                            .block(BlockId::Number(BlockNumberOrTag::Latest))
+                            .into_future()
+                            .instrument(tracing::info_span!(
+                                "fetch_eip712_version",
+                                otel.kind = "client",
+                            )),
+                    )
+                    .await
+                    .map_err(|e| categorize_transport_error(e, "fetch EIP-712 version"))?,
                 },
                 Erc3009Contract::SeparateVrs(separate_abi) => match separate_abi {
                     SeparateVrsAbi::Xbnb(erc20_contract) => {
@@ -2379,7 +2477,10 @@ fn create_erc3009_contract<P: Provider + Clone>(
 
         // SeparateVrs signature format with standard ERC20TokenWith3009 ABI (default for new tokens)
         (crate::tokens::SignatureFormat::SeparateVrs, "abi/ERC20TokenWith3009.json") => {
-            Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(ERC20TokenWith3009::new(asset_address, provider)))
+            Erc3009Contract::SeparateVrs(SeparateVrsAbi::StandardEip3009(ERC20TokenWith3009::new(
+                asset_address,
+                provider,
+            )))
         }
 
         // Fallback for unknown combinations
@@ -2406,7 +2507,9 @@ async fn assert_valid_payment<P: Provider + Clone>(
     chain: &EvmChain,
     payload: &PaymentPayload,
     requirements: &PaymentRequirements,
-    version_cache: Option<&Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>>,
+    version_cache: Option<
+        &Arc<tokio::sync::RwLock<std::collections::HashMap<Address, (String, std::time::Instant)>>>,
+    >,
     skip_balance_check: bool,
     token_manager: &TokenManager,
 ) -> Result<(Erc3009Contract<P>, ExactEvmPayment, Eip712Domain), FacilitatorLocalError> {
@@ -2439,13 +2542,9 @@ async fn assert_valid_payment<P: Provider + Clone>(
         ));
     }
     let payload_to: EvmAddress = payment_payload.authorization.to;
-    let requirements_to: EvmAddress = requirements
-        .pay_to
-        .clone()
-        .try_into()
-        .map_err(|_| FacilitatorLocalError::InvalidAddress(
-            "Invalid Ethereum address format".to_string()
-        ))?;
+    let requirements_to: EvmAddress = requirements.pay_to.clone().try_into().map_err(|_| {
+        FacilitatorLocalError::InvalidAddress("Invalid Ethereum address format".to_string())
+    })?;
     if payload_to != requirements_to {
         return Err(FacilitatorLocalError::ReceiverMismatch(
             payer.into(),
@@ -2456,18 +2555,17 @@ async fn assert_valid_payment<P: Provider + Clone>(
     let valid_after = payment_payload.authorization.valid_after;
     let valid_before = payment_payload.authorization.valid_before;
     assert_time(payer.into(), valid_after, valid_before)?;
-    let asset_address = requirements
-        .asset
-        .clone()
-        .try_into()
-        .map_err(|_| FacilitatorLocalError::InvalidAddress(
-            "Invalid Ethereum address format".to_string()
-        ))?;
+    let asset_address = requirements.asset.clone().try_into().map_err(|_| {
+        FacilitatorLocalError::InvalidAddress("Invalid Ethereum address format".to_string())
+    })?;
 
     // Determine contract type based on token configuration via TokenManager
     // Flow: asset_address → get_token_name() → get_signature_format() + get_abi_file() → create_erc3009_contract()
     let network_str = chain.network.to_string();
-    let contract = if let Some(token_name) = token_manager.get_token_name(asset_address, &network_str).await {
+    let contract = if let Some(token_name) = token_manager
+        .get_token_name(asset_address, &network_str)
+        .await
+    {
         if let (Some(signature_format), Some(abi_file)) = (
             token_manager.get_signature_format(&token_name).await,
             token_manager.get_abi_file(&token_name).await,
@@ -2486,7 +2584,12 @@ async fn assert_valid_payment<P: Provider + Clone>(
                 asset_address = %asset_address,
                 "Token found but no signature_format or abi_file configured, falling back to packed_bytes (USDC-style)"
             );
-            create_erc3009_contract(crate::tokens::SignatureFormat::PackedBytes, "abi/USDC.json", asset_address, provider.clone())
+            create_erc3009_contract(
+                crate::tokens::SignatureFormat::PackedBytes,
+                "abi/USDC.json",
+                asset_address,
+                provider.clone(),
+            )
         }
     } else {
         tracing::warn!(
@@ -2494,10 +2597,23 @@ async fn assert_valid_payment<P: Provider + Clone>(
             network = network_str,
             "Token not recognized in configuration, falling back to packed_bytes (USDC-style)"
         );
-        create_erc3009_contract(crate::tokens::SignatureFormat::PackedBytes, "abi/USDC.json", asset_address, provider.clone())
+        create_erc3009_contract(
+            crate::tokens::SignatureFormat::PackedBytes,
+            "abi/USDC.json",
+            asset_address,
+            provider.clone(),
+        )
     };
 
-    let domain = assert_domain(chain, &contract, payload, &asset_address, requirements, version_cache).await?;
+    let domain = assert_domain(
+        chain,
+        &contract,
+        payload,
+        &asset_address,
+        requirements,
+        version_cache,
+    )
+    .await?;
 
     let amount_required = requirements.max_amount_required.0;
     if !skip_balance_check {
@@ -2560,7 +2676,9 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
                     signature.clone(),
                 );
                 (
-                    TransferWithAuthorizationCallBuilder::PackedBytes(PackedBytesCallBuilder::Usdc(tx)),
+                    TransferWithAuthorizationCallBuilder::PackedBytes(
+                        PackedBytesCallBuilder::Usdc(tx),
+                    ),
                     *usdc_contract.address(),
                 )
             }
@@ -2571,7 +2689,10 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
             if signature.len() != 65 {
                 return Err(FacilitatorLocalError::InvalidSignature(
                     payment.from.into(),
-                    format!("Invalid signature length: expected 65, got {}", signature.len()),
+                    format!(
+                        "Invalid signature length: expected 65, got {}",
+                        signature.len()
+                    ),
                 ));
             }
             let v = signature[64];
@@ -2592,7 +2713,9 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
                         s,
                     );
                     (
-                        TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::Xbnb(tx)),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::Xbnb(tx),
+                        ),
                         *xbnb_contract.address(),
                     )
                 }
@@ -2609,7 +2732,9 @@ async fn transferWithAuthorization_0<'a, P: Provider>(
                         s,
                     );
                     (
-                        TransferWithAuthorizationCallBuilder::SeparateVrs(SeparateVrsCallBuilder::StandardEip3009(tx)),
+                        TransferWithAuthorizationCallBuilder::SeparateVrs(
+                            SeparateVrsCallBuilder::StandardEip3009(tx),
+                        ),
                         *erc20_contract.address(),
                     )
                 }
@@ -2912,9 +3037,9 @@ fn decode_revert_reason(data: &str) -> Option<String> {
         // ABI encoding: offset (32 bytes) + length (32 bytes) + string data
         // Length is at bytes 36..68, but we only need the last few bytes for reasonable lengths
         let len_bytes = &bytes[36..68];
-        let len = len_bytes
-            .iter()
-            .fold(0usize, |acc, &b| acc.saturating_mul(256).saturating_add(b as usize));
+        let len = len_bytes.iter().fold(0usize, |acc, &b| {
+            acc.saturating_mul(256).saturating_add(b as usize)
+        });
         if len <= 1024 && bytes.len() >= 68 + len {
             return String::from_utf8(bytes[68..68 + len].to_vec()).ok();
         }
@@ -3367,7 +3492,8 @@ mod tests {
 
     #[test]
     fn test_extract_no_data() {
-        let err = r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted" }))"#;
+        let err =
+            r#"TransportError(ErrorResp(ErrorPayload { code: 3, message: "execution reverted" }))"#;
         let result = extract_multicall_revert(err);
         assert_eq!(result, None);
     }
@@ -3555,8 +3681,8 @@ mod tests {
         }
     }
 
-    use alloy::rpc::types::{Log, TransactionReceipt};
     use alloy::primitives::B256;
+    use alloy::rpc::types::{Log, TransactionReceipt};
 
     /// Helper to create a mock Transfer event log
     fn mock_transfer_log(from: Address, to: Address, value: U256, log_index: u64) -> Log {
@@ -3595,8 +3721,8 @@ mod tests {
         success: bool,
         transfers: Vec<(Address, Address, U256)>,
     ) -> TransactionReceipt {
-        use alloy::consensus::{Receipt, ReceiptEnvelope};
         use alloy::consensus::Eip658Value;
+        use alloy::consensus::{Receipt, ReceiptEnvelope};
 
         let logs: Vec<Log> = transfers
             .into_iter()
@@ -3706,15 +3832,25 @@ mod tests {
 
         // Create settlements
         let settlements = vec![
-            mock_validated_settlement(from1, to1, value1, address!("2222222222222222222222222222222222222222"), vec![]),
-            mock_validated_settlement(from2, to2, value2, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(
+                from1,
+                to1,
+                value1,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
+            mock_validated_settlement(
+                from2,
+                to2,
+                value2,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
         ];
 
         // Create receipt with matching Transfer events
-        let receipt = mock_receipt_with_transfers(
-            true,
-            vec![(from1, to1, value1), (from2, to2, value2)],
-        );
+        let receipt =
+            mock_receipt_with_transfers(true, vec![(from1, to1, value1), (from2, to2, value2)]);
 
         // Parse results using test helper
         let results = test_parse_transfer_events(&receipt, &settlements);
@@ -3733,9 +3869,13 @@ mod tests {
         let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         let value = U256::from(1000000);
 
-        let settlements = vec![
-            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
-        ];
+        let settlements = vec![mock_validated_settlement(
+            from,
+            to,
+            value,
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        )];
 
         // Create failed receipt
         let receipt = mock_receipt_with_transfers(false, vec![]);
@@ -3745,7 +3885,10 @@ mod tests {
 
         // All results should have success=false when transaction fails
         assert_eq!(results.len(), 1);
-        assert!(!results[0].success, "Transfer should fail when transaction fails");
+        assert!(
+            !results[0].success,
+            "Transfer should fail when transaction fails"
+        );
     }
 
     #[tokio::test]
@@ -3761,8 +3904,20 @@ mod tests {
         let value2 = U256::from(2000000);
 
         let settlements = vec![
-            mock_validated_settlement(from1, to1, value1, address!("2222222222222222222222222222222222222222"), vec![]),
-            mock_validated_settlement(from2, to2, value2, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(
+                from1,
+                to1,
+                value1,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
+            mock_validated_settlement(
+                from2,
+                to2,
+                value2,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
         ];
 
         // Only include Transfer event for first settlement
@@ -3773,8 +3928,14 @@ mod tests {
 
         // First settlement should succeed, second should fail (missing event)
         assert_eq!(results.len(), 2);
-        assert!(results[0].success, "First transfer should succeed (event present)");
-        assert!(!results[1].success, "Second transfer should fail (event missing)");
+        assert!(
+            results[0].success,
+            "First transfer should succeed (event present)"
+        );
+        assert!(
+            !results[1].success,
+            "Second transfer should fail (event missing)"
+        );
     }
 
     #[tokio::test]
@@ -3808,9 +3969,19 @@ mod tests {
             // No hooks
         }
 
-        assert_eq!(calls.len(), 2, "Should have 2 Call3s (2 transfers, 0 hooks)");
-        assert_eq!(calls[0].0, address!("2222222222222222222222222222222222222222"));
-        assert_eq!(calls[1].0, address!("2222222222222222222222222222222222222222"));
+        assert_eq!(
+            calls.len(),
+            2,
+            "Should have 2 Call3s (2 transfers, 0 hooks)"
+        );
+        assert_eq!(
+            calls[0].0,
+            address!("2222222222222222222222222222222222222222")
+        );
+        assert_eq!(
+            calls[1].0,
+            address!("2222222222222222222222222222222222222222")
+        );
     }
 
     #[tokio::test]
@@ -3847,19 +4018,50 @@ mod tests {
             calls.push((hook.target, hook.calldata.clone()));
         }
 
-        assert_eq!(calls.len(), 3, "Should have 3 Call3s (1 transfer + 2 hooks)");
-        assert_eq!(calls[0].0, address!("3333333333333333333333333333333333333333"), "First should be transfer");
-        assert_eq!(calls[1].0, address!("1111111111111111111111111111111111111111"), "Second should be hook1");
-        assert_eq!(calls[2].0, address!("2222222222222222222222222222222222222222"), "Third should be hook2");
+        assert_eq!(
+            calls.len(),
+            3,
+            "Should have 3 Call3s (1 transfer + 2 hooks)"
+        );
+        assert_eq!(
+            calls[0].0,
+            address!("3333333333333333333333333333333333333333"),
+            "First should be transfer"
+        );
+        assert_eq!(
+            calls[1].0,
+            address!("1111111111111111111111111111111111111111"),
+            "Second should be hook1"
+        );
+        assert_eq!(
+            calls[2].0,
+            address!("2222222222222222222222222222222222222222"),
+            "Third should be hook2"
+        );
     }
 
     #[tokio::test]
     async fn test_call3_array_multiple_settlements_with_hooks() {
         // Test Call3 ordering with multiple settlements, each with hooks
 
-        let hook_a = mock_hook_call(address!("aaaa0000000000000000000000000000000000aa"), Bytes::new(), 100000, true);
-        let hook_b1 = mock_hook_call(address!("bbbb0000000000000000000000000000000000b1"), Bytes::new(), 100000, true);
-        let hook_b2 = mock_hook_call(address!("bbbb0000000000000000000000000000000000b2"), Bytes::new(), 100000, true);
+        let hook_a = mock_hook_call(
+            address!("aaaa0000000000000000000000000000000000aa"),
+            Bytes::new(),
+            100000,
+            true,
+        );
+        let hook_b1 = mock_hook_call(
+            address!("bbbb0000000000000000000000000000000000b1"),
+            Bytes::new(),
+            100000,
+            true,
+        );
+        let hook_b2 = mock_hook_call(
+            address!("bbbb0000000000000000000000000000000000b2"),
+            Bytes::new(),
+            100000,
+            true,
+        );
 
         let settlement_a = mock_validated_settlement(
             address!("1111111111111111111111111111111111111111"),
@@ -3888,15 +4090,30 @@ mod tests {
 
         // Expected order: transfer_a, hook_a, transfer_b, hook_b1, hook_b2
         assert_eq!(calls.len(), 5);
-        assert_eq!(calls[0].0, address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert_eq!(
+            calls[0].0,
+            address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         assert_eq!(calls[0].1, "transfer");
-        assert_eq!(calls[1].0, address!("aaaa0000000000000000000000000000000000aa"));
+        assert_eq!(
+            calls[1].0,
+            address!("aaaa0000000000000000000000000000000000aa")
+        );
         assert_eq!(calls[1].1, "hook0");
-        assert_eq!(calls[2].0, address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        assert_eq!(
+            calls[2].0,
+            address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
         assert_eq!(calls[2].1, "transfer");
-        assert_eq!(calls[3].0, address!("bbbb0000000000000000000000000000000000b1"));
+        assert_eq!(
+            calls[3].0,
+            address!("bbbb0000000000000000000000000000000000b1")
+        );
         assert_eq!(calls[3].1, "hook0");
-        assert_eq!(calls[4].0, address!("bbbb0000000000000000000000000000000000b2"));
+        assert_eq!(
+            calls[4].0,
+            address!("bbbb0000000000000000000000000000000000b2")
+        );
         assert_eq!(calls[4].1, "hook1");
     }
 
@@ -3928,9 +4145,15 @@ mod tests {
         calls.push((settlement.target, "transfer".to_string()));
 
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].0, address!("ffffffffffffffffffffffffffffffffffffffff"));
+        assert_eq!(
+            calls[0].0,
+            address!("ffffffffffffffffffffffffffffffffffffffff")
+        );
         assert_eq!(calls[0].1, "deployment");
-        assert_eq!(calls[1].0, address!("2222222222222222222222222222222222222222"));
+        assert_eq!(
+            calls[1].0,
+            address!("2222222222222222222222222222222222222222")
+        );
         assert_eq!(calls[1].1, "transfer");
     }
 
@@ -3944,15 +4167,24 @@ mod tests {
 
         // Two settlements with identical from/to/value
         let settlements = vec![
-            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
-            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
+            mock_validated_settlement(
+                from,
+                to,
+                value,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
+            mock_validated_settlement(
+                from,
+                to,
+                value,
+                address!("2222222222222222222222222222222222222222"),
+                vec![],
+            ),
         ];
 
         // Two Transfer events with identical data
-        let receipt = mock_receipt_with_transfers(
-            true,
-            vec![(from, to, value), (from, to, value)],
-        );
+        let receipt = mock_receipt_with_transfers(true, vec![(from, to, value), (from, to, value)]);
 
         let results = test_parse_transfer_events(&receipt, &settlements);
 
@@ -3971,21 +4203,25 @@ mod tests {
         let expected_value = U256::from(1000000);
         let wrong_value = U256::from(2000000);
 
-        let settlements = vec![
-            mock_validated_settlement(from, to, expected_value, address!("2222222222222222222222222222222222222222"), vec![]),
-        ];
+        let settlements = vec![mock_validated_settlement(
+            from,
+            to,
+            expected_value,
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        )];
 
         // Transfer event has wrong value
-        let receipt = mock_receipt_with_transfers(
-            true,
-            vec![(from, to, wrong_value)],
-        );
+        let receipt = mock_receipt_with_transfers(true, vec![(from, to, wrong_value)]);
 
         let results = test_parse_transfer_events(&receipt, &settlements);
 
         // Should not match because value is different
         assert_eq!(results.len(), 1);
-        assert!(!results[0].success, "Transfer should fail when value doesn't match");
+        assert!(
+            !results[0].success,
+            "Transfer should fail when value doesn't match"
+        );
     }
 
     #[tokio::test]
@@ -3997,21 +4233,25 @@ mod tests {
         let wrong_to = address!("cccccccccccccccccccccccccccccccccccccccc");
         let value = U256::from(1000000);
 
-        let settlements = vec![
-            mock_validated_settlement(from, expected_to, value, address!("2222222222222222222222222222222222222222"), vec![]),
-        ];
+        let settlements = vec![mock_validated_settlement(
+            from,
+            expected_to,
+            value,
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        )];
 
         // Transfer event has wrong recipient
-        let receipt = mock_receipt_with_transfers(
-            true,
-            vec![(from, wrong_to, value)],
-        );
+        let receipt = mock_receipt_with_transfers(true, vec![(from, wrong_to, value)]);
 
         let results = test_parse_transfer_events(&receipt, &settlements);
 
         // Should not match because recipient is different
         assert_eq!(results.len(), 1);
-        assert!(!results[0].success, "Transfer should fail when recipient doesn't match");
+        assert!(
+            !results[0].success,
+            "Transfer should fail when recipient doesn't match"
+        );
     }
 
     #[tokio::test]
@@ -4022,9 +4262,13 @@ mod tests {
         let to = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         let value = U256::from(1000000);
 
-        let settlements = vec![
-            mock_validated_settlement(from, to, value, address!("2222222222222222222222222222222222222222"), vec![]),
-        ];
+        let settlements = vec![mock_validated_settlement(
+            from,
+            to,
+            value,
+            address!("2222222222222222222222222222222222222222"),
+            vec![],
+        )];
 
         // Receipt with no Transfer events
         let receipt = mock_receipt_with_transfers(true, vec![]);
@@ -4033,7 +4277,10 @@ mod tests {
 
         // Should not match any transfers
         assert_eq!(results.len(), 1);
-        assert!(!results[0].success, "Transfer should fail when no events in receipt");
+        assert!(
+            !results[0].success,
+            "Transfer should fail when no events in receipt"
+        );
     }
 
     #[tokio::test]
@@ -4046,12 +4293,23 @@ mod tests {
             address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             U256::from(1000000),
             address!("2222222222222222222222222222222222222222"),
-            vec![mock_hook_call(address!("1111111111111111111111111111111111111111"), Bytes::new(), 100000, true); 149],
+            vec![
+                mock_hook_call(
+                    address!("1111111111111111111111111111111111111111"),
+                    Bytes::new(),
+                    100000,
+                    true
+                );
+                149
+            ],
         );
 
         // Calculate Call3 count
         let call3_count = 1 + settlement_many_hooks.hooks.len();
-        assert_eq!(call3_count, 150, "Settlement with 149 hooks should need exactly 150 Call3s");
+        assert_eq!(
+            call3_count, 150,
+            "Settlement with 149 hooks should need exactly 150 Call3s"
+        );
 
         // If we add one more hook, it should exceed the limit
         let settlement_too_many = mock_validated_settlement(
@@ -4059,11 +4317,22 @@ mod tests {
             address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             U256::from(1000000),
             address!("2222222222222222222222222222222222222222"),
-            vec![mock_hook_call(address!("1111111111111111111111111111111111111111"), Bytes::new(), 100000, true); 150],
+            vec![
+                mock_hook_call(
+                    address!("1111111111111111111111111111111111111111"),
+                    Bytes::new(),
+                    100000,
+                    true
+                );
+                150
+            ],
         );
 
         let call3_count_over = 1 + settlement_too_many.hooks.len();
-        assert_eq!(call3_count_over, 151, "Settlement with 150 hooks should need 151 Call3s");
+        assert_eq!(
+            call3_count_over, 151,
+            "Settlement with 150 hooks should need 151 Call3s"
+        );
     }
 
     // ========================================================================
@@ -4188,10 +4457,7 @@ mod tests {
         // Populate cache
         {
             let mut cache_write = cache.write().await;
-            cache_write.insert(
-                token_address,
-                (eip712_name.clone(), eip712_version.clone()),
-            );
+            cache_write.insert(token_address, (eip712_name.clone(), eip712_version.clone()));
         }
 
         // Read from cache
@@ -4251,15 +4517,27 @@ mod tests {
 
         // Simulate Multicall3 results: 2 succeed, 1 fails
         let results = vec![
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
-            Aggregate3Result { success: false, return_data: Bytes::new() },
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
+            Aggregate3Result {
+                success: false,
+                return_data: Bytes::new(),
+            },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
         ];
 
         // Check batch logic with allow_partial_failure=true
         let batch_succeeds = check_partial_failure_logic(&results, true);
 
-        assert!(batch_succeeds, "Batch should succeed with allow_partial_failure=true");
+        assert!(
+            batch_succeeds,
+            "Batch should succeed with allow_partial_failure=true"
+        );
         assert!(results[0].success, "Settlement 1 should succeed");
         assert!(!results[1].success, "Settlement 2 should fail");
         assert!(results[2].success, "Settlement 3 should succeed");
@@ -4279,30 +4557,57 @@ mod tests {
 
         // Simulate Multicall3 results: 2 succeed, 1 fails
         let results = vec![
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
-            Aggregate3Result { success: false, return_data: Bytes::new() },
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
+            Aggregate3Result {
+                success: false,
+                return_data: Bytes::new(),
+            },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
         ];
 
         // Check batch logic with allow_partial_failure=false
         let batch_succeeds = check_partial_failure_logic(&results, false);
 
-        assert!(!batch_succeeds, "Batch should fail with allow_partial_failure=false when any settlement fails");
+        assert!(
+            !batch_succeeds,
+            "Batch should fail with allow_partial_failure=false when any settlement fails"
+        );
 
         // Verify the logic correctly identifies failure
         let all_succeeded = results.iter().all(|r| r.success);
         assert!(!all_succeeded, "Not all settlements succeeded");
-        assert_eq!(all_succeeded, batch_succeeds, "Batch success should match all settlements succeeding");
+        assert_eq!(
+            all_succeeded, batch_succeeds,
+            "Batch success should match all settlements succeeding"
+        );
 
         // Test case with all successes
         let all_success_results = vec![
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
-            Aggregate3Result { success: true, return_data: Bytes::from(vec![0x01]) },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
+            Aggregate3Result {
+                success: true,
+                return_data: Bytes::from(vec![0x01]),
+            },
         ];
 
         let batch_succeeds_all = check_partial_failure_logic(&all_success_results, false);
-        assert!(batch_succeeds_all, "Batch should succeed when all settlements succeed");
+        assert!(
+            batch_succeeds_all,
+            "Batch should succeed when all settlements succeed"
+        );
     }
 
     #[tokio::test]
@@ -4316,9 +4621,13 @@ mod tests {
         let hook_allow_failure = true;
 
         // Check settlement logic
-        let settlement_succeeds = check_hook_failure_logic(transfer_success, hook_success, hook_allow_failure);
+        let settlement_succeeds =
+            check_hook_failure_logic(transfer_success, hook_success, hook_allow_failure);
 
-        assert!(settlement_succeeds, "Settlement should succeed when transfer succeeds and hook allows failure");
+        assert!(
+            settlement_succeeds,
+            "Settlement should succeed when transfer succeeds and hook allows failure"
+        );
 
         // Verify the logic components
         assert!(transfer_success, "Transfer succeeded");
@@ -4344,9 +4653,13 @@ mod tests {
         let hook_allow_failure = false;
 
         // Check settlement logic
-        let settlement_succeeds = check_hook_failure_logic(transfer_success, hook_success, hook_allow_failure);
+        let settlement_succeeds =
+            check_hook_failure_logic(transfer_success, hook_success, hook_allow_failure);
 
-        assert!(!settlement_succeeds, "Settlement should fail when transfer succeeds but required hook fails");
+        assert!(
+            !settlement_succeeds,
+            "Settlement should fail when transfer succeeds but required hook fails"
+        );
 
         // Verify the logic components
         assert!(transfer_success, "Transfer succeeded");
@@ -4362,7 +4675,10 @@ mod tests {
 
         // Test case where hook succeeds
         let settlement_succeeds_when_hook_works = check_hook_failure_logic(true, true, false);
-        assert!(settlement_succeeds_when_hook_works, "Settlement should succeed when both transfer and required hook succeed");
+        assert!(
+            settlement_succeeds_when_hook_works,
+            "Settlement should succeed when both transfer and required hook succeed"
+        );
     }
 
     #[tokio::test]
@@ -4375,7 +4691,13 @@ mod tests {
         let value = U256::from(1234567890);
 
         // Create settlement metadata with Payment field values
-        let settlement = mock_validated_settlement(from, to, value, address!("cccccccccccccccccccccccccccccccccccccccc"), vec![]);
+        let settlement = mock_validated_settlement(
+            from,
+            to,
+            value,
+            address!("cccccccccccccccccccccccccccccccccccccccc"),
+            vec![],
+        );
 
         // Test Payment field extraction
         // These would normally be resolved by HookManager.resolve_parameters()
@@ -4399,12 +4721,13 @@ mod tests {
 
         // Verify the encoded values contain the expected data (address format may vary with checksums)
         assert!(
-            encoded_from.to_lowercase().contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            encoded_from
+                .to_lowercase()
+                .contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             "Encoded from should contain address data"
         );
         assert_eq!(
-            encoded_value,
-            "1234567890",
+            encoded_value, "1234567890",
             "Encoded value should match decimal format"
         );
     }
@@ -4430,9 +4753,21 @@ mod tests {
         let runtime_number = runtime_ctx.block_number;
         let runtime_sender = runtime_ctx.sender;
 
-        assert_eq!(runtime_timestamp, U256::from(1234567890), "Runtime.timestamp should match");
-        assert_eq!(runtime_number, U256::from(100), "Runtime.block_number should match");
-        assert_eq!(runtime_sender, address!("1111111111111111111111111111111111111111"), "Runtime.sender should match");
+        assert_eq!(
+            runtime_timestamp,
+            U256::from(1234567890),
+            "Runtime.timestamp should match"
+        );
+        assert_eq!(
+            runtime_number,
+            U256::from(100),
+            "Runtime.block_number should match"
+        );
+        assert_eq!(
+            runtime_sender,
+            address!("1111111111111111111111111111111111111111"),
+            "Runtime.sender should match"
+        );
 
         // Test that Runtime fields can be encoded
         // In actual implementation, these would be ABI-encoded into hook calldata
@@ -4440,9 +4775,15 @@ mod tests {
         let encoded_number = runtime_number.to_string();
         let encoded_sender = runtime_sender.to_string();
 
-        assert_eq!(encoded_timestamp, "1234567890", "Encoded timestamp should match");
+        assert_eq!(
+            encoded_timestamp, "1234567890",
+            "Encoded timestamp should match"
+        );
         assert_eq!(encoded_number, "100", "Encoded block number should match");
-        assert!(!encoded_sender.is_empty(), "Encoded sender should not be empty");
+        assert!(
+            !encoded_sender.is_empty(),
+            "Encoded sender should not be empty"
+        );
 
         // Verify RuntimeContext can be used with provider (already tested in earlier tests)
         // This test focuses on the data structure and encoding

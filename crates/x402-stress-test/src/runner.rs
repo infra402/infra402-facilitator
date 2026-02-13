@@ -1,6 +1,7 @@
 use crate::client::FacilitatorClient;
 use crate::config::Config;
 use crate::stats::{RequestOutcome, RequestRecord, RequestType, Stats};
+use crate::wallet::EvmSenderWallet;
 use alloy::primitives::U256;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result};
@@ -15,7 +16,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use crate::wallet::EvmSenderWallet;
 
 pub struct StressTest {
     config: Config,
@@ -251,26 +251,28 @@ async fn execute_request(
     is_verify: bool,
 ) -> RequestOutcome {
     // Create payment requirements using facilitator types (supports BSC networks)
-    let network: infra402_facilitator::network::Network = serde_json::from_value(
-        serde_json::Value::String(config.env.network.clone())
-    ).expect("Invalid network value");
+    let network: infra402_facilitator::network::Network =
+        serde_json::from_value(serde_json::Value::String(config.env.network.clone()))
+            .expect("Invalid network value");
 
     let payment_requirements = PaymentRequirements {
         scheme: Scheme::Exact,
         network,
         max_amount_required: infra402_facilitator::types::TokenAmount(
-            U256::from_str(&config.env.amount).expect("Invalid AMOUNT format")
+            U256::from_str(&config.env.amount).expect("Invalid AMOUNT format"),
         ),
         resource: "http://stress-test".parse().expect("Invalid URL"),
         description: "X402 stress test".to_string(),
         mime_type: "application/json".to_string(),
         output_schema: None,
         pay_to: infra402_facilitator::types::MixedAddress::Evm(
-            infra402_facilitator::types::EvmAddress::from_str(&config.env.pay_to).expect("Invalid PAY_TO address")
+            infra402_facilitator::types::EvmAddress::from_str(&config.env.pay_to)
+                .expect("Invalid PAY_TO address"),
         ),
         max_timeout_seconds: config.env.max_timeout_seconds,
         asset: infra402_facilitator::types::MixedAddress::Evm(
-            infra402_facilitator::types::EvmAddress::from_str(&config.env.asset).expect("Invalid ASSET address")
+            infra402_facilitator::types::EvmAddress::from_str(&config.env.asset)
+                .expect("Invalid ASSET address"),
         ),
         extra: Some({
             let mut map = serde_json::Map::new();
@@ -287,7 +289,9 @@ async fn execute_request(
     };
 
     // Generate signed payment payload (x402-reqwest now uses facilitator types!)
-    let payment_payload = match sender_wallet.payment_payload(payment_requirements.clone()).await
+    let payment_payload = match sender_wallet
+        .payment_payload(payment_requirements.clone())
+        .await
     {
         Ok(payload) => payload,
         Err(e) => {
@@ -312,10 +316,7 @@ async fn execute_request_v1(
     is_verify: bool,
 ) -> RequestOutcome {
     if is_verify {
-        match client
-            .verify(payment_payload, payment_requirements)
-            .await
-        {
+        match client.verify(payment_payload, payment_requirements).await {
             Ok(response) => match response {
                 VerifyResponse::Valid { .. } => RequestOutcome::VerifyValid,
                 VerifyResponse::Invalid { reason, .. } => RequestOutcome::VerifyInvalid {
@@ -327,10 +328,7 @@ async fn execute_request_v1(
             },
         }
     } else {
-        match client
-            .settle(payment_payload, payment_requirements)
-            .await
-        {
+        match client.settle(payment_payload, payment_requirements).await {
             Ok(response) => {
                 if response.success {
                     RequestOutcome::SettleSuccess

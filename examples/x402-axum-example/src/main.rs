@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let facilitator_url =
         env::var("FACILITATOR_URL").unwrap_or("https://facilitator.x402.rs".to_string());
+    let port = env::var("PORT").unwrap_or("3000".to_string());
 
     let x402 = X402Middleware::try_from(facilitator_url)?;
 
@@ -32,20 +33,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ))
                 .with_price_tag(V1SolanaExact::price_tag(
                     pubkey!("EGBQqKn968sVv5cQh5Cr72pSTHfxsuzq7o7asqYB5uEV"),
-                    USDC::solana().amount(100),
+                    USDC::solana_devnet().amount(100),
                 )),
             ),
         )
         .route(
             "/static-price-v2",
-            get(my_handler).layer(
+            get(static_price_v2_handler).layer(
                 x402.with_price_tag(V2Eip155Exact::price_tag(
                     address!("0xBAc675C310721717Cd4A37F6cbeA1F081b1C2a07"),
                     USDC::base_sepolia().amount(10u64),
                 ))
                 .with_price_tag(V2SolanaExact::price_tag(
                     pubkey!("EGBQqKn968sVv5cQh5Cr72pSTHfxsuzq7o7asqYB5uEV"),
-                    USDC::solana().amount(100),
+                    USDC::solana_devnet().amount(100),
                 )),
             ),
         )
@@ -69,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // V2 Solana price tag
                         V2SolanaExact::price_tag(
                             pubkey!("EGBQqKn968sVv5cQh5Cr72pSTHfxsuzq7o7asqYB5uEV"),
-                            USDC::solana().amount(amount),
+                            USDC::solana_devnet().amount(amount),
                         ),
                     ]
                 }
@@ -102,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ),
                             V2SolanaExact::price_tag(
                                 pubkey!("EGBQqKn968sVv5cQh5Cr72pSTHfxsuzq7o7asqYB5uEV"),
-                                USDC::solana().amount(100),
+                                USDC::solana_devnet().amount(100),
                             ),
                         ]
                     }
@@ -112,7 +113,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Using facilitator on {}", x402.facilitator_url());
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let bind_address = format!("0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(bind_address)
         .await
         .expect("Can not start server");
     tracing::info!("Listening on {}", listener.local_addr().unwrap());
@@ -124,6 +126,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[instrument(skip_all)]
 async fn my_handler() -> impl IntoResponse {
     (StatusCode::OK, "This is a VIP content!")
+}
+
+#[instrument(skip_all)]
+async fn static_price_v2_handler() -> impl IntoResponse {
+    (StatusCode::OK, "VIP content from /static-price-v2")
 }
 
 fn init_tracing() {

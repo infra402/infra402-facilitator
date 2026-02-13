@@ -30,8 +30,8 @@ use tower_http::cors;
 use crate::config::FacilitatorConfig;
 use crate::facilitator_local::FacilitatorLocal;
 use crate::provider_cache::ProviderCache;
-use crate::security::{AdminAuth, ApiKeyAuth, IpFilter, RateLimiter};
 use crate::security::abuse::{AbuseDetector, AbuseDetectorConfig};
+use crate::security::{AdminAuth, ApiKeyAuth, IpFilter, RateLimiter};
 use crate::sig_down::SigDown;
 use crate::telemetry::Telemetry;
 
@@ -154,7 +154,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Some(manager)
     } else {
-        tracing::info!("Batch settlement disabled globally - using direct settlement for all networks");
+        tracing::info!(
+            "Batch settlement disabled globally - using direct settlement for all networks"
+        );
         None
     };
 
@@ -220,10 +222,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Add hook admin routes if hook manager is initialized
     if let Some(ref manager) = hook_manager {
-        let hook_routes = crate::hooks::admin::admin_hook_routes(
-            Arc::clone(manager),
-            admin_auth.clone(),
-        );
+        let hook_routes =
+            crate::hooks::admin::admin_hook_routes(Arc::clone(manager), admin_auth.clone());
         admin_endpoints = admin_endpoints.merge(hook_routes);
         tracing::info!("Hook admin routes registered");
     }
@@ -235,23 +235,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(axum::Extension(batch_queue_manager.clone()))
         .layer(axum::Extension(app_config.batch_settlement.clone()))
         .layer(axum::Extension(abuse_detector.clone()))
-        .layer(tower::ServiceBuilder::new()
-            .layer(axum::middleware::from_fn(move |req, next| {
-                let auth = api_key_auth_middleware.clone();
-                async move { auth.middleware(req, next).await }
-            }))
-            .layer(axum::middleware::from_fn(move |req, next| {
-                let limiter = rate_limiter_middleware.clone();
-                async move { limiter.middleware(req, next).await }
-            }))
-            .layer(axum::middleware::from_fn(move |req, next| {
-                let filter = ip_filter_middleware.clone();
-                async move { filter.middleware(req, next).await }
-            }))
-            .layer(axum::middleware::from_fn(move |req, next| {
-                let detector = abuse_detector_middleware.clone();
-                async move { detector.middleware(req, next).await }
-            }))
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(axum::middleware::from_fn(move |req, next| {
+                    let auth = api_key_auth_middleware.clone();
+                    async move { auth.middleware(req, next).await }
+                }))
+                .layer(axum::middleware::from_fn(move |req, next| {
+                    let limiter = rate_limiter_middleware.clone();
+                    async move { limiter.middleware(req, next).await }
+                }))
+                .layer(axum::middleware::from_fn(move |req, next| {
+                    let filter = ip_filter_middleware.clone();
+                    async move { filter.middleware(req, next).await }
+                }))
+                .layer(axum::middleware::from_fn(move |req, next| {
+                    let detector = abuse_detector_middleware.clone();
+                    async move { detector.middleware(req, next).await }
+                })),
         )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             app_config.request.max_body_size_bytes,
@@ -286,7 +287,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cleanup_interval_secs
     );
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(cleanup_interval_secs));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(cleanup_interval_secs));
         loop {
             tokio::select! {
                 _ = interval.tick() => {

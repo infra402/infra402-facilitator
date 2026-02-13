@@ -268,7 +268,10 @@ mod tests {
 
     #[test]
     fn test_parse_errors() {
-        assert!(matches!("".parse::<ChainId>(), Err(ChainIdParseError::Empty)));
+        assert!(matches!(
+            "".parse::<ChainId>(),
+            Err(ChainIdParseError::Empty)
+        ));
         assert!(matches!(
             "eip155".parse::<ChainId>(),
             Err(ChainIdParseError::MissingSeparator)

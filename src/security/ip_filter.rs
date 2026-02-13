@@ -31,16 +31,10 @@ pub struct IpFilterConfig {
 impl IpFilter {
     pub fn new(config: IpFilterConfig) -> Self {
         if !config.allowed_ips.is_empty() {
-            tracing::info!(
-                count = config.allowed_ips.len(),
-                "IP allow list enabled"
-            );
+            tracing::info!(count = config.allowed_ips.len(), "IP allow list enabled");
         }
         if !config.blocked_ips.is_empty() {
-            tracing::info!(
-                count = config.blocked_ips.len(),
-                "IP block list enabled"
-            );
+            tracing::info!(count = config.blocked_ips.len(), "IP block list enabled");
         }
 
         Self {

@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::chain::evm::SettlementMetadata;
 use super::context::RuntimeContext;
 use super::errors::{HookError, HookResult};
+use crate::chain::evm::SettlementMetadata;
 
 /// Source of a parameter value
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -134,11 +134,9 @@ impl HookDefinition {
         // Build DynSolValue for each parameter
         let mut values = Vec::new();
         for (i, param) in self.parameters.iter().enumerate() {
-            let sol_type = DynSolType::parse(&param.sol_type)
-                .map_err(|e| HookError::InvalidSolidityType(
-                    param.sol_type.clone(),
-                    e.to_string()
-                ))?;
+            let sol_type = DynSolType::parse(&param.sol_type).map_err(|e| {
+                HookError::InvalidSolidityType(param.sol_type.clone(), e.to_string())
+            })?;
 
             // Verify type matches function signature
             if param.sol_type != input_types[i] {
@@ -149,7 +147,8 @@ impl HookDefinition {
                 });
             }
 
-            let value = self.resolve_parameter_value(&param.source, &sol_type, metadata, runtime)?;
+            let value =
+                self.resolve_parameter_value(&param.source, &sol_type, metadata, runtime)?;
             values.push(value);
         }
 
@@ -166,7 +165,7 @@ impl HookDefinition {
         if parts.len() != 2 {
             return Err(HookError::InvalidFunctionSignature(
                 sig.to_string(),
-                "Missing '(' in signature".to_string()
+                "Missing '(' in signature".to_string(),
             ));
         }
 
@@ -176,7 +175,10 @@ impl HookDefinition {
         let input_types = if params_str.is_empty() {
             Vec::new()
         } else {
-            params_str.split(',').map(|s| s.trim().to_string()).collect()
+            params_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect()
         };
 
         Ok((function_name, input_types))
@@ -185,8 +187,9 @@ impl HookDefinition {
     /// Encode function call with selector
     fn encode_with_selector(function_name: String, values: &[DynSolValue]) -> HookResult<Vec<u8>> {
         // Build full signature for selector calculation
-        let type_strs: Vec<String> = values.iter().map(|v| {
-            match v {
+        let type_strs: Vec<String> = values
+            .iter()
+            .map(|v| match v {
                 DynSolValue::Address(_) => "address".to_string(),
                 DynSolValue::Uint(_, bits) => format!("uint{}", bits),
                 DynSolValue::Int(_, bits) => format!("int{}", bits),
@@ -195,8 +198,8 @@ impl HookDefinition {
                 DynSolValue::Bytes(_) => "bytes".to_string(),
                 DynSolValue::String(_) => "string".to_string(),
                 _ => "unknown".to_string(),
-            }
-        }).collect();
+            })
+            .collect();
 
         let full_signature = format!("{}({})", function_name, type_strs.join(","));
 
@@ -208,7 +211,6 @@ impl HookDefinition {
         // Create a tuple of all parameter values and encode it
         let tuple_value = DynSolValue::Tuple(values.to_vec());
         let encoded_params = tuple_value.abi_encode_params();
-
 
         // Combine selector + encoded params
         let mut result = Vec::with_capacity(4 + encoded_params.len());
@@ -233,15 +235,14 @@ impl HookDefinition {
             ParameterSource::Runtime(field) => {
                 Self::extract_runtime_field(field, runtime, sol_type)
             }
-            ParameterSource::Static(val) => {
-                Self::parse_static_value(val, sol_type)
-            }
+            ParameterSource::Static(val) => Self::parse_static_value(val, sol_type),
             ParameterSource::Config(key) => {
-                let val = self.config_values.get(key)
-                    .ok_or_else(|| HookError::InvalidParameterSource(
+                let val = self.config_values.get(key).ok_or_else(|| {
+                    HookError::InvalidParameterSource(
                         key.clone(),
-                        "Config key not found in config_values".to_string()
-                    ))?;
+                        "Config key not found in config_values".to_string(),
+                    )
+                })?;
                 Self::parse_static_value(val, sol_type)
             }
         }
@@ -259,10 +260,7 @@ impl HookDefinition {
             PaymentField::Value => Ok(DynSolValue::Uint(metadata.value, 256)),
             PaymentField::ValidAfter => Ok(DynSolValue::Uint(metadata.valid_after, 256)),
             PaymentField::ValidBefore => Ok(DynSolValue::Uint(metadata.valid_before, 256)),
-            PaymentField::Nonce => Ok(DynSolValue::FixedBytes(
-                metadata.nonce,
-                32
-            )),
+            PaymentField::Nonce => Ok(DynSolValue::FixedBytes(metadata.nonce, 32)),
             PaymentField::ContractAddress => Ok(DynSolValue::Address(metadata.contract_address)),
             PaymentField::SignatureV => {
                 // Extract v from signature if available (byte 64 of 65-byte signature)
@@ -316,18 +314,16 @@ impl HookDefinition {
     }
 
     /// Parse a static string value to appropriate Solidity type
-    fn parse_static_value(
-        val: &str,
-        sol_type: &DynSolType,
-    ) -> HookResult<DynSolValue> {
+    fn parse_static_value(val: &str, sol_type: &DynSolType) -> HookResult<DynSolValue> {
         match sol_type {
             DynSolType::Address => {
-                let addr = Address::from_str(val)
-                    .map_err(|e| HookError::StaticValueParseFailed(
+                let addr = Address::from_str(val).map_err(|e| {
+                    HookError::StaticValueParseFailed(
                         val.to_string(),
                         "address".to_string(),
-                        e.to_string()
-                    ))?;
+                        e.to_string(),
+                    )
+                })?;
                 Ok(DynSolValue::Address(addr))
             }
             DynSolType::Uint(bits) => {
@@ -335,11 +331,14 @@ impl HookDefinition {
                     U256::from_str_radix(val.trim_start_matches("0x"), 16)
                 } else {
                     U256::from_str_radix(val, 10)
-                }.map_err(|e| HookError::StaticValueParseFailed(
-                    val.to_string(),
-                    format!("uint{}", bits),
-                    e.to_string()
-                ))?;
+                }
+                .map_err(|e| {
+                    HookError::StaticValueParseFailed(
+                        val.to_string(),
+                        format!("uint{}", bits),
+                        e.to_string(),
+                    )
+                })?;
                 Ok(DynSolValue::Uint(uint, *bits))
             }
             DynSolType::Int(bits) => {
@@ -350,11 +349,14 @@ impl HookDefinition {
                     U256::from_str_radix(val.trim_start_matches("-"), 10)
                 } else {
                     U256::from_str_radix(val, 10)
-                }.map_err(|e| HookError::StaticValueParseFailed(
-                    val.to_string(),
-                    format!("int{}", bits),
-                    e.to_string()
-                ))?;
+                }
+                .map_err(|e| {
+                    HookError::StaticValueParseFailed(
+                        val.to_string(),
+                        format!("int{}", bits),
+                        e.to_string(),
+                    )
+                })?;
 
                 let is_negative = val.starts_with("-");
                 let int = if is_negative {
@@ -366,48 +368,52 @@ impl HookDefinition {
                 Ok(DynSolValue::Int(int, *bits))
             }
             DynSolType::Bool => {
-                let b = val.parse::<bool>()
-                    .map_err(|e| HookError::StaticValueParseFailed(
+                let b = val.parse::<bool>().map_err(|e| {
+                    HookError::StaticValueParseFailed(
                         val.to_string(),
                         "bool".to_string(),
-                        e.to_string()
-                    ))?;
+                        e.to_string(),
+                    )
+                })?;
                 Ok(DynSolValue::Bool(b))
             }
             DynSolType::FixedBytes(size) => {
                 let hex_str = val.strip_prefix("0x").unwrap_or(val);
-                let bytes = alloy::hex::decode(hex_str)
-                    .map_err(|e| HookError::StaticValueParseFailed(
+                let bytes = alloy::hex::decode(hex_str).map_err(|e| {
+                    HookError::StaticValueParseFailed(
                         val.to_string(),
                         format!("bytes{}", size),
-                        e.to_string()
-                    ))?;
+                        e.to_string(),
+                    )
+                })?;
                 if bytes.len() != *size {
                     return Err(HookError::StaticValueParseFailed(
                         val.to_string(),
                         format!("bytes{}", size),
-                        format!("Expected {} bytes, got {}", size, bytes.len())
+                        format!("Expected {} bytes, got {}", size, bytes.len()),
                     ));
                 }
-                Ok(DynSolValue::FixedBytes(FixedBytes::from_slice(&bytes), *size))
+                Ok(DynSolValue::FixedBytes(
+                    FixedBytes::from_slice(&bytes),
+                    *size,
+                ))
             }
             DynSolType::Bytes => {
                 let hex_str = val.strip_prefix("0x").unwrap_or(val);
-                let bytes = alloy::hex::decode(hex_str)
-                    .map_err(|e| HookError::StaticValueParseFailed(
+                let bytes = alloy::hex::decode(hex_str).map_err(|e| {
+                    HookError::StaticValueParseFailed(
                         val.to_string(),
                         "bytes".to_string(),
-                        e.to_string()
-                    ))?;
+                        e.to_string(),
+                    )
+                })?;
                 Ok(DynSolValue::Bytes(bytes.into()))
             }
-            DynSolType::String => {
-                Ok(DynSolValue::String(val.to_string()))
-            }
+            DynSolType::String => Ok(DynSolValue::String(val.to_string())),
             _ => Err(HookError::InvalidSolidityType(
                 format!("{:?}", sol_type),
-                "Unsupported type for static value parsing".to_string()
-            ))
+                "Unsupported type for static value parsing".to_string(),
+            )),
         }
     }
 
@@ -426,11 +432,9 @@ impl HookDefinition {
 
         // Validate each parameter type
         for (i, param) in self.parameters.iter().enumerate() {
-            DynSolType::parse(&param.sol_type)
-                .map_err(|e| HookError::InvalidSolidityType(
-                    param.sol_type.clone(),
-                    e.to_string()
-                ))?;
+            DynSolType::parse(&param.sol_type).map_err(|e| {
+                HookError::InvalidSolidityType(param.sol_type.clone(), e.to_string())
+            })?;
 
             if param.sol_type != input_types[i] {
                 return Err(HookError::TypeMismatch {
@@ -450,7 +454,7 @@ impl HookDefinition {
 #[serde(untagged)]
 pub enum TokenFilter {
     /// Wildcard: Accept any token
-    Any(String),  // "*"
+    Any(String), // "*"
     /// Specific token names from tokens.toml
     Specific(Vec<String>),
 }
@@ -628,7 +632,7 @@ impl HookSettings {
     /// Format: "${ENV_VAR_NAME}" → value from std::env::var
     fn substitute_env_var(s: &str) -> String {
         if s.starts_with("${") && s.ends_with("}") {
-            let env_var_name = &s[2..s.len()-1];
+            let env_var_name = &s[2..s.len() - 1];
             std::env::var(env_var_name).unwrap_or_else(|_| {
                 tracing::warn!(
                     env_var = env_var_name,
@@ -667,10 +671,7 @@ impl HookConfig {
             match Self::load_custom_hooks(&custom_path) {
                 Ok(custom_config) => {
                     Self::merge_custom_hooks(&mut config.hooks, custom_config)?;
-                    tracing::info!(
-                        custom_file = custom_path,
-                        "Loaded and merged custom hooks"
-                    );
+                    tracing::info!(custom_file = custom_path, "Loaded and merged custom hooks");
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -686,7 +687,8 @@ impl HookConfig {
 
         // Validate all hook definitions (including merged custom hooks)
         for (name, hook) in &config.hooks.definitions {
-            hook.validate().map_err(|e| format!("Hook '{}' validation failed: {}", name, e))?;
+            hook.validate()
+                .map_err(|e| format!("Hook '{}' validation failed: {}", name, e))?;
         }
 
         tracing::info!(
@@ -740,12 +742,15 @@ impl HookConfig {
 
         // Merge custom network configurations
         for (network_name, custom_network) in custom.hooks.networks {
-            let network_config = main.networks.entry(network_name.clone()).or_insert_with(|| NetworkHookConfig {
-                enabled: None,
-                mappings: HashMap::new(),
-                contracts: HashMap::new(),
-                token_filters: HashMap::new(),
-            });
+            let network_config = main
+                .networks
+                .entry(network_name.clone())
+                .or_insert_with(|| NetworkHookConfig {
+                    enabled: None,
+                    mappings: HashMap::new(),
+                    contracts: HashMap::new(),
+                    token_filters: HashMap::new(),
+                });
 
             // Merge mappings
             for (dest_addr, hook_names) in custom_network.mappings {
@@ -761,7 +766,10 @@ impl HookConfig {
 
             // Merge contract addresses (destination-scoped)
             for (hook_name, dest_contracts) in custom_network.contracts {
-                let hook_contracts = network_config.contracts.entry(hook_name.clone()).or_default();
+                let hook_contracts = network_config
+                    .contracts
+                    .entry(hook_name.clone())
+                    .or_default();
                 for (dest_addr, contract_addr) in dest_contracts {
                     if hook_contracts.contains_key(&dest_addr) {
                         tracing::warn!(
@@ -848,15 +856,18 @@ source = { source_type = "payment", field = "value" }
         assert!(config.hooks.enabled);
 
         let hook = config.hooks.definitions.get("notify_hook").unwrap();
-        assert_eq!(&hook.function_signature, "notifySettlement(address,address,uint256)");
+        assert_eq!(
+            &hook.function_signature,
+            "notifySettlement(address,address,uint256)"
+        );
         assert_eq!(hook.parameters.len(), 3);
     }
 
     #[test]
     fn test_parse_function_signature() {
-        let (name, types) = HookDefinition::parse_function_signature(
-            "notifySettlement(address,address,uint256)"
-        ).unwrap();
+        let (name, types) =
+            HookDefinition::parse_function_signature("notifySettlement(address,address,uint256)")
+                .unwrap();
 
         assert_eq!(name, "notifySettlement");
         assert_eq!(types, vec!["address", "address", "uint256"]);
@@ -890,7 +901,10 @@ description = "Test hook"
 
         // Should load successfully despite missing custom file
         let result = HookConfig::from_file(temp_path);
-        assert!(result.is_ok(), "Should succeed even when custom hooks file is missing");
+        assert!(
+            result.is_ok(),
+            "Should succeed even when custom hooks file is missing"
+        );
 
         let config = result.unwrap();
         assert!(config.hooks.enabled);

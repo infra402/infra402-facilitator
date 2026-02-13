@@ -4,11 +4,11 @@
 //! They allow runtime management of hooks without server restart.
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ async fn reload_hooks(State(manager): State<Arc<HookManager>>) -> Response {
                 error: format!("Failed to reload hooks: {}", e),
             }),
         )
-            .into_response()
+            .into_response(),
     }
 }
 
@@ -91,11 +91,7 @@ async fn enable_hook(
             message: Some(format!("Hook '{}' enabled", name)),
         })
         .into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse { error: e }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { error: e })).into_response(),
     }
 }
 
@@ -110,11 +106,7 @@ async fn disable_hook(
             message: Some(format!("Hook '{}' disabled", name)),
         })
         .into_response(),
-        Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse { error: e }),
-        )
-            .into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, Json(ErrorResponse { error: e })).into_response(),
     }
 }
 

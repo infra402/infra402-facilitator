@@ -30,7 +30,9 @@ pub enum HookError {
     StaticValueParseFailed(String, String, String),
 
     /// Parameter count mismatch
-    #[error("Parameter count mismatch: expected {expected}, got {actual} for function '{function}'")]
+    #[error(
+        "Parameter count mismatch: expected {expected}, got {actual} for function '{function}'"
+    )]
     ParameterCountMismatch {
         function: String,
         expected: usize,

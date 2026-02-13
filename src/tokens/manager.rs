@@ -79,15 +79,10 @@ impl TokenManager {
         })
     }
 
-
     /// Get token name from address for a specific network
     ///
     /// Returns the token identifier (e.g., "usdc", "xbnb") if found
-    pub async fn get_token_name(
-        &self,
-        address: Address,
-        network: &str,
-    ) -> Option<String> {
+    pub async fn get_token_name(&self, address: Address, network: &str) -> Option<String> {
         let state = self.state.read().await;
 
         state
@@ -104,11 +99,7 @@ impl TokenManager {
     }
 
     /// Get resolved token address for a network
-    pub async fn get_token_address(
-        &self,
-        token_name: &str,
-        network: &str,
-    ) -> Option<Address> {
+    pub async fn get_token_address(&self, token_name: &str, network: &str) -> Option<Address> {
         let state = self.state.read().await;
 
         let network_tokens = state.settings.networks.get(network)?;
@@ -132,7 +123,10 @@ impl TokenManager {
     }
 
     /// Get signature format for a token
-    pub async fn get_signature_format(&self, token_name: &str) -> Option<super::config::SignatureFormat> {
+    pub async fn get_signature_format(
+        &self,
+        token_name: &str,
+    ) -> Option<super::config::SignatureFormat> {
         let state = self.state.read().await;
         state
             .settings
@@ -199,11 +193,7 @@ impl TokenManager {
             .networks
             .get(network)
             .map(|network_tokens| {
-                let mut tokens: Vec<String> = network_tokens
-                    .tokens
-                    .keys()
-                    .cloned()
-                    .collect();
+                let mut tokens: Vec<String> = network_tokens.tokens.keys().cloned().collect();
                 tokens.sort();
                 tokens
             })
@@ -256,5 +246,4 @@ usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
         // Cleanup
         std::fs::remove_file(temp_path).ok();
     }
-
 }

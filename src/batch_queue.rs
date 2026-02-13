@@ -31,7 +31,10 @@ pub struct BatchQueueManager {
 
 impl BatchQueueManager {
     /// Creates a new BatchQueueManager with the given configuration.
-    pub fn new(config: BatchSettlementConfig, hook_manager: Option<Arc<crate::hooks::HookManager>>) -> Self {
+    pub fn new(
+        config: BatchSettlementConfig,
+        hook_manager: Option<Arc<crate::hooks::HookManager>>,
+    ) -> Self {
         Self {
             queues: Arc::new(DashMap::new()),
             config,
@@ -90,12 +93,11 @@ impl BatchQueueManager {
 
         // Check if we need to spawn a background processing task
         // Use compare_exchange to atomically check and set the flag
-        if queue.task_running.compare_exchange(
-            false,
-            true,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ).is_ok() {
+        if queue
+            .task_running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             // We successfully set the flag from false to true, so we spawn the task
             let queue_for_loop = Arc::clone(&queue);
             let queue_for_cleanup = Arc::clone(&queue);
@@ -111,10 +113,14 @@ impl BatchQueueManager {
             );
 
             tokio::spawn(async move {
-                queue_for_loop.process_loop(provider_clone, allow_partial_failure).await;
+                queue_for_loop
+                    .process_loop(provider_clone, allow_partial_failure)
+                    .await;
 
                 // Clear the task_running flag
-                queue_for_cleanup.task_running.store(false, Ordering::SeqCst);
+                queue_for_cleanup
+                    .task_running
+                    .store(false, Ordering::SeqCst);
 
                 // CLEANUP: Remove from DashMap when task exits to release provider Arc
                 queues_map.remove(&key);
@@ -147,7 +153,14 @@ pub struct BatchQueueStats {
 /// Collects settlement requests and periodically flushes them as Multicall3 batches.
 pub struct BatchQueue {
     /// Pending settlement requests with their response channels
-    pending: Arc<Mutex<Vec<(SettleRequest, oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>)>>>,
+    pending: Arc<
+        Mutex<
+            Vec<(
+                SettleRequest,
+                oneshot::Sender<Result<SettleResponse, FacilitatorLocalError>>,
+            )>,
+        >,
+    >,
     /// Maximum number of settlements per batch
     max_batch_size: usize,
     /// Maximum time to wait before flushing batch (milliseconds)
@@ -231,7 +244,10 @@ impl BatchQueue {
         ticker.tick().await; // Second tick waits for max_wait_ms
 
         // Flush whatever we have accumulated
-        if let Err(e) = self.flush_batch(&network_provider, allow_partial_failure).await {
+        if let Err(e) = self
+            .flush_batch(&network_provider, allow_partial_failure)
+            .await
+        {
             tracing::error!(
                 facilitator = %self.facilitator_addr,
                 network = %self.network,
