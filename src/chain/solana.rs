@@ -593,14 +593,24 @@ impl Facilitator for SolanaProvider {
     }
 
     async fn supported(&self) -> Result<SupportedPaymentKindsResponse, Self::Error> {
-        let kinds = vec![SupportedPaymentKind {
-            network: self.network().to_string(),
-            scheme: Scheme::Exact,
-            x402_version: X402Version::V1,
-            extra: Some(SupportedPaymentKindExtra {
-                fee_payer: self.signer_address(),
-            }),
-        }];
+        let network = self.network();
+        let extra = Some(SupportedPaymentKindExtra {
+            fee_payer: self.signer_address(),
+        });
+        let kinds = vec![
+            SupportedPaymentKind {
+                network: network.to_string(),
+                scheme: Scheme::Exact,
+                x402_version: X402Version::V1,
+                extra: extra.clone(),
+            },
+            SupportedPaymentKind {
+                network: network.to_chain_id().to_string(),
+                scheme: Scheme::Exact,
+                x402_version: X402Version::V2,
+                extra,
+            },
+        ];
         Ok(SupportedPaymentKindsResponse { kinds })
     }
 }

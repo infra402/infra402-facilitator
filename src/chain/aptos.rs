@@ -140,13 +140,22 @@ impl Facilitator for AptosProvider {
         // Return supported payment kinds for Aptos
         // Even though verify/settle are not implemented, we advertise support
         // so clients know the network will be supported
+        let network = self.config.network;
         Ok(SupportedPaymentKindsResponse {
-            kinds: vec![SupportedPaymentKind {
-                x402_version: X402Version::V1,
-                scheme: Scheme::Exact,
-                network: self.config.network.to_string(),
-                extra: None,
-            }],
+            kinds: vec![
+                SupportedPaymentKind {
+                    x402_version: X402Version::V1,
+                    scheme: Scheme::Exact,
+                    network: network.to_string(),
+                    extra: None,
+                },
+                SupportedPaymentKind {
+                    x402_version: X402Version::V2,
+                    scheme: Scheme::Exact,
+                    network: network.to_chain_id().to_string(),
+                    extra: None,
+                },
+            ],
         })
     }
 }
@@ -154,6 +163,7 @@ impl Facilitator for AptosProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{Scheme, X402Version};
 
     #[test]
     fn test_aptos_config() {
@@ -179,5 +189,75 @@ mod tests {
             MixedAddress::Offchain(addr) => assert_eq!(addr, "0x123abc"),
             _ => panic!("expected Offchain address"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_supported_returns_v1_and_v2() {
+        let config = AptosConfig {
+            network: Network::Aptos,
+            rpc_url: "https://example.com".to_string(),
+            account_address: "0x1".to_string(),
+        };
+        let provider = AptosProvider::new(config, None);
+        let response = provider.supported().await.unwrap();
+
+        assert_eq!(response.kinds.len(), 2);
+
+        // V1 entry uses network name
+        let v1 = &response.kinds[0];
+        assert_eq!(v1.x402_version, X402Version::V1);
+        assert_eq!(v1.scheme, Scheme::Exact);
+        assert_eq!(v1.network, "aptos");
+
+        // V2 entry uses CAIP-2 chain ID
+        let v2 = &response.kinds[1];
+        assert_eq!(v2.x402_version, X402Version::V2);
+        assert_eq!(v2.scheme, Scheme::Exact);
+        assert_eq!(v2.network, "aptos:mainnet");
+    }
+
+    #[tokio::test]
+    async fn test_supported_testnet_returns_v1_and_v2() {
+        let config = AptosConfig {
+            network: Network::AptosTestnet,
+            rpc_url: "https://example.com".to_string(),
+            account_address: "0x1".to_string(),
+        };
+        let provider = AptosProvider::new(config, None);
+        let response = provider.supported().await.unwrap();
+
+        assert_eq!(response.kinds.len(), 2);
+
+        let v1 = &response.kinds[0];
+        assert_eq!(v1.x402_version, X402Version::V1);
+        assert_eq!(v1.network, "aptos-testnet");
+
+        let v2 = &response.kinds[1];
+        assert_eq!(v2.x402_version, X402Version::V2);
+        assert_eq!(v2.network, "aptos:testnet");
+    }
+
+    #[tokio::test]
+    async fn test_supported_json_format() {
+        let config = AptosConfig {
+            network: Network::Aptos,
+            rpc_url: "https://example.com".to_string(),
+            account_address: "0x1".to_string(),
+        };
+        let provider = AptosProvider::new(config, None);
+        let response = provider.supported().await.unwrap();
+
+        let json = serde_json::to_value(&response).unwrap();
+        let kinds = json["kinds"].as_array().unwrap();
+
+        // V1 entry: x402Version serializes as 1, network is plain name
+        assert_eq!(kinds[0]["x402Version"], 1);
+        assert_eq!(kinds[0]["network"], "aptos");
+        assert_eq!(kinds[0]["scheme"], "exact");
+
+        // V2 entry: x402Version serializes as 2, network is CAIP-2
+        assert_eq!(kinds[1]["x402Version"], 2);
+        assert_eq!(kinds[1]["network"], "aptos:mainnet");
+        assert_eq!(kinds[1]["scheme"], "exact");
     }
 }

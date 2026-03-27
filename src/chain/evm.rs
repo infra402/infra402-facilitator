@@ -1382,12 +1382,21 @@ where
 
     /// Report payment kinds supported by this provider on its current network.
     async fn supported(&self) -> Result<SupportedPaymentKindsResponse, Self::Error> {
-        let kinds = vec![SupportedPaymentKind {
-            network: self.chain().network().to_string(),
-            x402_version: X402Version::V1,
-            scheme: Scheme::Exact,
-            extra: None,
-        }];
+        let network = self.chain().network();
+        let kinds = vec![
+            SupportedPaymentKind {
+                network: network.to_string(),
+                x402_version: X402Version::V1,
+                scheme: Scheme::Exact,
+                extra: None,
+            },
+            SupportedPaymentKind {
+                network: network.to_chain_id().to_string(),
+                x402_version: X402Version::V2,
+                scheme: Scheme::Exact,
+                extra: None,
+            },
+        ];
         Ok(SupportedPaymentKindsResponse { kinds })
     }
 }

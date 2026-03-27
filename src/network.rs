@@ -783,4 +783,37 @@ mod tests {
         assert!(!Network::Celo.is_testnet());
         assert!(!Network::Aptos.is_testnet());
     }
+
+    #[test]
+    fn test_chain_id_is_caip2_format() {
+        // Every network's CAIP-2 chain ID must contain a colon separator
+        for network in Network::variants() {
+            let chain_id = network.to_chain_id();
+            let s = chain_id.to_string();
+            assert!(
+                s.contains(':'),
+                "{network:?} chain ID '{s}' is not in CAIP-2 format (missing ':')"
+            );
+        }
+
+        // Spot-check specific CAIP-2 values
+        assert_eq!(Network::Base.to_chain_id().to_string(), "eip155:8453");
+        assert_eq!(
+            Network::BaseSepolia.to_chain_id().to_string(),
+            "eip155:84532"
+        );
+        assert_eq!(Network::Polygon.to_chain_id().to_string(), "eip155:137");
+        assert_eq!(Network::Bsc.to_chain_id().to_string(), "eip155:56");
+        assert_eq!(Network::Celo.to_chain_id().to_string(), "eip155:42220");
+        assert_eq!(Network::Solana.to_chain_id().to_string(), "solana:mainnet");
+        assert_eq!(
+            Network::SolanaDevnet.to_chain_id().to_string(),
+            "solana:devnet"
+        );
+        assert_eq!(Network::Aptos.to_chain_id().to_string(), "aptos:mainnet");
+        assert_eq!(
+            Network::AptosTestnet.to_chain_id().to_string(),
+            "aptos:testnet"
+        );
+    }
 }
